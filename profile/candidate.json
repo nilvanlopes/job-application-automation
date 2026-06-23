@@ -1,0 +1,73 @@
+{
+  "name": "Nilvan Lopes Cruz",
+  "title": "",
+  "skills": [
+    "HTML, CSS, JavaScript",
+    "React, Angular",
+    "Git, Visual Studio Code, Figma, Adobe XD",
+    "Componentização, responsividade, consumo de APIs REST"
+  ],
+  "education": [
+    {
+      "name": "Análise e Desenvolvimento de Sistemas",
+      "institution": "Universidade Estadual do Tocantins (UNITINS)",
+      "status": "Cursando",
+      "level": "",
+      "started_at": "2024",
+      "ended_at": "",
+      "notes": ""
+    },
+    {
+      "name": "FullStack Java e Angular",
+      "institution": "DIO",
+      "status": "",
+      "level": "",
+      "started_at": "2023",
+      "ended_at": "",
+      "notes": ""
+    },
+    {
+      "name": "Machine Learning",
+      "institution": "DIO",
+      "status": "",
+      "level": "",
+      "started_at": "2024",
+      "ended_at": "",
+      "notes": ""
+    },
+    {
+      "name": "Sistemas de Informação",
+      "institution": "UNITINS",
+      "status": "",
+      "level": "",
+      "started_at": "2016",
+      "ended_at": "",
+      "notes": ""
+    },
+    {
+      "name": "Técnico em Redes de Computadores",
+      "institution": "Colégio Militar de Palmas",
+      "status": "",
+      "level": "",
+      "started_at": "2015",
+      "ended_at": "",
+      "notes": ""
+    }
+  ],
+  "summary": "Atuo na área de desenvolvimento como programador FullStack desde 2025, com experiência na implementação e manutenção de sistemas para agronegócio, fitness e governamentais, utilizando tecnologias como React, PHP, Python, NodeJS, SQL, Git e Angular.",
+  "email": "nilvanlopes@outlook.com",
+  "phone": "(63) 99223-0471",
+  "website": "",
+  "github": "https://github.com/nilvanlopes",
+  "linkedin": "https://www.linkedin.com/in/nilvanlopes/",
+  "whatsapp": "",
+  "highlights": [
+    "Desenvolvimento do aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
+    "Participei ativamente da modelagem do sistema, aplicando conceitos da engenharia de software para promover uma entrega profissional do produto e sua documentação.",
+    "Desenvolvi e refatorei componentes modulares em React, integrei APIs REST, gerenciei estado da aplicação e apoiei operações de dados em bancos relacionais.",
+    "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
+    "Garanti qualidade de código, estabilidade do sistema e entregas consistentes dentro do fluxo de desenvolvimento.",
+    "Configurei fluxos de CI/CD e boas práticas de versionamento.",
+    "Participei do deploy do aplicativo nas lojas App Store e Play Store."
+  ]
+}
