@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from .paths import CANDIDATE_PROFILE_PATH
 
@@ -29,6 +29,28 @@ class ExperienceEntry:
     ended_at: str = ""
     activities: List[str] = field(default_factory=list)
     skills: List[str] = field(default_factory=list)
+
+
+EXPERIENCE_ENTRY_FIELDS = {"company", "role", "project", "started_at", "ended_at", "activities", "skills"}
+
+
+def normalize_experience_entry_data(entry: dict[str, Any]) -> dict[str, Any]:
+    data = dict(entry)
+    dates = data.pop("dates", None)
+    if dates and not data.get("started_at") and not data.get("ended_at"):
+        if isinstance(dates, str):
+            data["started_at"] = dates
+        elif isinstance(dates, (list, tuple)):
+            values = [str(item).strip() for item in dates if str(item).strip()]
+            if values:
+                data["started_at"] = values[0]
+            if len(values) > 1:
+                data["ended_at"] = values[1]
+    if "activities" in data and not isinstance(data["activities"], list):
+        data["activities"] = [str(data["activities"])] if str(data["activities"]).strip() else []
+    if "skills" in data and not isinstance(data["skills"], list):
+        data["skills"] = [str(data["skills"])] if str(data["skills"]).strip() else []
+    return {key: value for key, value in data.items() if key in EXPERIENCE_ENTRY_FIELDS}
 
 
 @dataclass(slots=True)
@@ -81,7 +103,7 @@ class CandidateProfile:
             for entry in (data.get("education") or [])
         ]
         data["experiences"] = [
-            entry if isinstance(entry, ExperienceEntry) else ExperienceEntry(**entry)
+            entry if isinstance(entry, ExperienceEntry) else ExperienceEntry(**normalize_experience_entry_data(entry))
             for entry in (data.get("experiences") or [])
         ]
         projects: list[ProjectEntry] = []
@@ -109,6 +131,14 @@ class CandidateProfile:
 
 
 @dataclass(slots=True)
+class ApplicationInstruction:
+    text: str
+    kind: str = "custom"
+    required: bool = True
+    evidence_hint: str = ""
+
+
+@dataclass(slots=True)
 class JobPosting:
     raw_text: str
     title: str
@@ -122,6 +152,8 @@ class JobPosting:
     requirements: List[str] = field(default_factory=list)
     nice_to_have: List[str] = field(default_factory=list)
     benefits: List[str] = field(default_factory=list)
+    requested_email_subject: str = ""
+    application_instructions: List[ApplicationInstruction] = field(default_factory=list)
 
     @classmethod
     def from_text(cls, text: str) -> "JobPosting":
@@ -130,7 +162,10 @@ class JobPosting:
         title = _extract_title(lines)
         company = _extract_prefixed_value(raw_text, r"Empresa\s*:\s*(.+)")
         location = _extract_prefixed_value(raw_text, r"Local\s*:\s*(.+)")
-        work_model = _extract_prefixed_value(raw_text, r"Modelo de trabalho\s*:\s*(.+)")
+        work_model = _extract_prefixed_value(
+            raw_text,
+            r"(?:Modelo de trabalho|Modelo)\s*:\s*(.+)",
+        )
         contact_email = _extract_email(raw_text)
         contact_whatsapp = _extract_whatsapp(raw_text)
         requirements = _extract_section_items(raw_text, "REQUISITOS", ("DIFERENCIAIS", "BENEFÍCIOS", "BENEFICIOS"))
@@ -138,6 +173,8 @@ class JobPosting:
         benefits = _extract_section_items(raw_text, "BENEFÍCIOS", ("Enviar currículo", "Empresa:")) or _extract_section_items(raw_text, "BENEFICIOS", ("Enviar currículo", "Empresa:"))
         description = _extract_description(raw_text)
         keywords = _extract_keywords(raw_text)
+        requested_email_subject = _extract_requested_email_subject(raw_text)
+        application_instructions = _extract_application_instructions(raw_text)
         return cls(
             raw_text=raw_text,
             title=title,
@@ -151,6 +188,8 @@ class JobPosting:
             requirements=requirements,
             nice_to_have=nice_to_have,
             benefits=benefits,
+            requested_email_subject=requested_email_subject,
+            application_instructions=application_instructions,
         )
 
     def to_dict(self) -> dict:
@@ -168,6 +207,10 @@ def _sanitize_job_text(text: str) -> str:
     vacancy_match = re.search(r"\bVAGA\s+DE\s+EMPREGO\s*:", cleaned, flags=re.IGNORECASE)
     if vacancy_match:
         cleaned = cleaned[vacancy_match.start() :]
+    else:
+        vacancy_match = re.search(r"(?im)^\s*(?:[^\w\s]+)?\s*Vaga\s+[^\n\r]+", cleaned)
+        if vacancy_match:
+            cleaned = cleaned[vacancy_match.start() :]
 
     noise_patterns = [
         r"\bResponder\b.*$",
@@ -191,6 +234,8 @@ def _sanitize_job_text(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     # Restore newlines around headings and list markers after whitespace collapse.
     cleaned = re.sub(r"\s+(Local\s*:)", r"\n\1", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+(Modelo\s*:)", r"\n\1", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+(Modalidade\s*:)", r"\n\1", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+(Modelo\s+de\s+trabalho\s*:)", r"\n\1", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+(DESCRI[ÇC][ÃA]O\s+DA\s+VAGA\s*:)", r"\n\1", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+(REQUISITOS|DIFERENCIAIS|BENEF[ÍI]CIOS)\b", r"\n\1", cleaned, flags=re.IGNORECASE)
@@ -201,7 +246,12 @@ def _sanitize_job_text(text: str) -> str:
 def _extract_title(lines: list[str]) -> str:
     if not lines:
         return "Vaga sem título"
-    first = re.sub(r"^vaga\s+de\s+emprego\s*:\s*", "", lines[0], flags=re.IGNORECASE).strip()
+    first = re.sub(
+        r"^vaga\s+(?:de\s+emprego\s*:\s*)?",
+        "",
+        lines[0],
+        flags=re.IGNORECASE,
+    ).strip()
     if (
         len(lines) > 1
         and not re.match(r"^(requisitos|diferenciais|benef[íi]cios|descri[çc][ãa]o)\b", lines[1], re.IGNORECASE)
@@ -214,6 +264,7 @@ def _extract_title(lines: list[str]) -> str:
 
 def _format_job_title(title: str) -> str:
     title = " ".join(title.split())
+    title = re.sub(r"(?<=[a-zá-ú])(?=[A-ZÁ-Ú])", " ", title)
     if title.isupper() or sum(1 for c in title if c.isupper()) > max(8, len(title) // 2):
         title = title.title()
     replacements = {
@@ -236,12 +287,111 @@ def _extract_prefixed_value(text: str, pattern: str) -> str:
 
 def _extract_email(text: str) -> str:
     match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", text)
-    return match.group(0) if match else ""
+    if not match:
+        return ""
+    email = match.group(0)
+    email = re.sub(r"(?:com|br|net|org)como$", lambda found: found.group(0)[:-4], email)
+    local, separator, domain = email.partition("@")
+    prefix_match = re.search(r"para([A-Za-z0-9._%+-]+)$", local, flags=re.IGNORECASE)
+    if separator and prefix_match:
+        email = f"{prefix_match.group(1)}@{domain}"
+    return email
 
 
 def _extract_whatsapp(text: str) -> str:
     match = re.search(r"Whatsapp\s+([0-9 .()\-+]+)", text, flags=re.IGNORECASE)
     return match.group(1).strip() if match else ""
+
+
+def _extract_requested_email_subject(text: str) -> str:
+    match = re.search(
+        r"assunto\s+[\"“”']([^\"“”']+)[\"“”']",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).strip(" :.-") if match else ""
+
+
+def _extract_application_instructions(text: str) -> list[ApplicationInstruction]:
+    section = _extract_application_section(text)
+    if not section:
+        return []
+    instructions: list[ApplicationInstruction] = []
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^(?:[-•]|\d+[.)])\s*", "", line).strip()
+        if not line or re.search(r"envie\s+para|com\s+o\s+assunto", line, flags=re.IGNORECASE):
+            continue
+        kind = _classify_application_instruction(line)
+        instructions.append(
+            ApplicationInstruction(
+                text=line,
+                kind=kind,
+                required=True,
+                evidence_hint=_instruction_evidence_hint(kind),
+            )
+        )
+    return _dedupe_application_instructions(instructions)
+
+
+def _extract_application_section(text: str) -> str:
+    match = re.search(
+        r"(?:Como\s+se\s+candidatar|Para\s+se\s+candidatar|Candidatura)\s*:?\s*(.+)",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not match:
+        return ""
+    section = match.group(1)
+    stop_match = re.search(
+        r"\n\s*(?:Candidaturas\s+sem|Observa[çc][aã]o|Importante)\b",
+        section,
+        flags=re.IGNORECASE,
+    )
+    if stop_match:
+        section = section[: stop_match.start()]
+    return section.strip()
+
+
+def _classify_application_instruction(text: str) -> str:
+    value = text.casefold()
+    if "github" in value or "portf" in value:
+        return "github_or_portfolio"
+    if "linkedin" in value or "curr" in value:
+        return "resume_or_linkedin"
+    if "php" in value and ("legado" in value or "mant" in value):
+        return "legacy_php_paragraph"
+    if "disponibilidade" in value or "valor" in value or "hora" in value or "semanal" in value:
+        return "availability_and_compensation"
+    if "contrato" in value and ("ativo" in value or "tempo" in value or "ocup" in value):
+        return "active_contracts"
+    return "custom"
+
+
+def _instruction_evidence_hint(kind: str) -> str:
+    return {
+        "github_or_portfolio": "github, website ou projetos do perfil",
+        "resume_or_linkedin": "currículo anexado e linkedin do perfil",
+        "legacy_php_paragraph": "experiências com PHP, manutenção e sistemas legados",
+        "availability_and_compensation": "resposta explícita do candidato",
+        "active_contracts": "resposta explícita do candidato",
+    }.get(kind, "resposta explícita do candidato")
+
+
+def _dedupe_application_instructions(
+    instructions: list[ApplicationInstruction],
+) -> list[ApplicationInstruction]:
+    unique: list[ApplicationInstruction] = []
+    seen: set[tuple[str, str]] = set()
+    for instruction in instructions:
+        key = (instruction.kind, instruction.text.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(instruction)
+    return unique
 
 
 def _extract_description(text: str) -> str:

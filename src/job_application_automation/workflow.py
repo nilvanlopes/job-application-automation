@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import html
 import os
 import re
 from contextlib import nullcontext
@@ -9,9 +10,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .application_instructions import (
+    ApplicationInstructionError,
+    ApplicationInstructionResult,
+    instructions_markdown,
+    load_application_answers,
+    resolve_application_instructions,
+)
 from .ai_client import create_ai_client, providers_need_ollama
 from .ai_email import (
     AIEmailBrief,
+    AIEmailGenerationError,
     AIEmailReviewAttempt,
     AIEmailReviewError,
     ReviewedAIEmailContent,
@@ -46,6 +55,7 @@ class ApplicationRequest:
     provider: str = ""
     optimizer_output_name: str = ""
     optimizer_provider: str = ""
+    application_answer_file: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +105,18 @@ def run_application(
         final_recipient = request.recipient_email.strip() or job.contact_email.strip()
         review_recipient = _resolve_review_recipient(request.review_recipient_email)
         output_dir = resolve_output_dir(job, request.output_dir, now=now)
+        answers = load_application_answers(request.application_answer_file)
+        instruction_result = resolve_application_instructions(candidate, job, answers=answers)
+        if instruction_result.has_pending:
+            output_dir.mkdir(parents=True, exist_ok=False)
+            _write_job_debug_artifacts(output_dir, job)
+            _write_application_instruction_artifacts(output_dir, instruction_result)
+            _log_step(f"Instruções obrigatórias pendentes; detalhes salvos em {output_dir}")
+            raise ApplicationInstructionError(
+                "Candidatura bloqueada: a vaga exige informações que não existem no perfil "
+                "nem no arquivo de respostas.",
+                instruction_result,
+            )
 
         _log_step("Mapeando aderências e gerando o e-mail completo com IA")
         try:
@@ -114,6 +136,12 @@ def run_application(
             _write_job_debug_artifacts(output_dir, job)
             _log_step(f"Revisão automática reprovou o e-mail; detalhes salvos em {output_dir}")
             raise
+        except AIEmailGenerationError as exc:
+            output_dir.mkdir(parents=True, exist_ok=False)
+            _write_failed_email_generation_artifacts(output_dir, exc)
+            _write_job_debug_artifacts(output_dir, job)
+            _log_step(f"Geração automática do e-mail falhou; detalhes salvos em {output_dir}")
+            raise
         _log_step("Montando rascunho da candidatura")
         draft = build_application_draft(
             candidate,
@@ -122,6 +150,7 @@ def run_application(
             actual_job_recipient=job.contact_email or final_recipient or None,
             base_resume_markdown=resume_text,
             ai_email_content=reviewed_email.email,
+            instruction_result=instruction_result,
         )
 
         _log_step("Executando optimizer de currículo")
@@ -148,6 +177,7 @@ def run_application(
         )
         _write_artifacts(output_dir, draft)
         _write_email_review_artifacts(output_dir, reviewed_email)
+        _write_application_instruction_artifacts(output_dir, instruction_result)
         _write_manifest(
             output_dir,
             subject=draft.email_subject,
@@ -158,6 +188,7 @@ def run_application(
             pdf_path=copied_resume.pdf_path,
             optimized_resume=copied_resume,
             reviewed_email=reviewed_email,
+            instruction_result=instruction_result,
         )
 
         send_result = None
@@ -192,11 +223,13 @@ def send_existing_application(
     output_dir: Path,
     *,
     recipient_email: str = "",
+    subject: str = "",
+    body_text: str = "",
     sender_email: str = "nilvanlopes@outlook.com",
 ) -> OutlookComSendResult:
     output_dir = Path(output_dir)
     manifest = _load_manifest(output_dir)
-    subject = _manifest_string(manifest, "subject")
+    resolved_subject = subject.strip() or _manifest_string(manifest, "subject")
     final_recipient = (
         recipient_email.strip()
         or _manifest_string(manifest, "final_recipient_email")
@@ -206,11 +239,14 @@ def send_existing_application(
         raise ValueError(
             "Destinatário final não encontrado nos artefatos. Informe --recipient-email para enviar."
         )
-    if not subject:
+    if not resolved_subject:
         raise ValueError("Assunto não encontrado em application_manifest.json.")
     _ensure_manifest_email_review_approved(manifest)
+    _ensure_manifest_application_instructions_complete(manifest)
 
     html_path = output_dir / (_manifest_string(manifest, "cover_email_html") or "cover_email.html")
+    if body_text.strip():
+        html_path = _write_final_body_override(output_dir, body_text)
     pdf_name = _manifest_string(manifest, "resume_pdf")
     if not pdf_name:
         raise ValueError("PDF final não encontrado em application_manifest.json.")
@@ -219,12 +255,17 @@ def send_existing_application(
     _log_step(f"Enviando artefatos existentes para {final_recipient}")
     result = send_outlook_com_email(
         recipient_email=final_recipient,
-        subject=subject,
+        subject=resolved_subject,
         html_path=html_path,
         attachment_paths=[pdf_path],
         config=OutlookComConfig(sender_email=sender_email),
     )
-    _write_send_result(output_dir / "final_send_result.json", result)
+    _write_send_result(
+        output_dir / "final_send_result.json",
+        result,
+        override_html_path=html_path if body_text.strip() else None,
+        subject_override=subject.strip() or None,
+    )
     return result
 
 
@@ -319,6 +360,51 @@ def _write_failed_email_review_artifacts(
     )
     (output_dir / "email_review.md").write_text(
         _email_review_markdown(attempts, alignment_brief=alignment_brief),
+        encoding="utf-8",
+    )
+
+
+def _write_application_instruction_artifacts(
+    output_dir: Path,
+    instruction_result: ApplicationInstructionResult,
+) -> None:
+    (output_dir / "application_instructions.json").write_text(
+        json.dumps(instruction_result.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (output_dir / "application_instructions.md").write_text(
+        instructions_markdown(instruction_result),
+        encoding="utf-8",
+    )
+    if instruction_result.has_pending:
+        (output_dir / "application_instructions_pending.json").write_text(
+            json.dumps(
+                {"pending": [item.to_dict() for item in instruction_result.pending]},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        (output_dir / "application_instructions_pending.md").write_text(
+            instructions_markdown(ApplicationInstructionResult((), instruction_result.pending)),
+            encoding="utf-8",
+        )
+
+
+def _write_failed_email_generation_artifacts(output_dir: Path, exc: AIEmailGenerationError) -> None:
+    payload = {
+        "approved": False,
+        "stage": "email_generation",
+        "error": str(exc),
+    }
+    (output_dir / "email_generation_error.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (output_dir / "email_generation_error.md").write_text(
+        "# Falha na geração automática do e-mail\n\n"
+        f"- Etapa: {payload['stage']}\n"
+        f"- Erro: {payload['error']}\n",
         encoding="utf-8",
     )
 
@@ -447,6 +533,7 @@ def _write_manifest(
     pdf_path: Path,
     optimized_resume: OptimizedResume,
     reviewed_email: ReviewedAIEmailContent,
+    instruction_result: ApplicationInstructionResult | None = None,
 ) -> None:
     manifest = {
         "manifest_version": APPLICATION_MANIFEST_VERSION,
@@ -454,6 +541,9 @@ def _write_manifest(
         "review_recipient_email": review_recipient_email,
         "final_recipient_email": final_recipient_email,
         "job_contact_email": job.contact_email,
+        "requested_email_subject": job.requested_email_subject,
+        "application_instructions": instruction_result.to_dict() if instruction_result else None,
+        "application_instructions_pending": bool(instruction_result and instruction_result.has_pending),
         "cover_email_html": html_path.name,
         "resume_pdf": pdf_path.name,
         "optimizer_source_path": str(optimized_resume.source_path),
@@ -491,6 +581,25 @@ def _load_job_contact_email(output_dir: Path) -> str:
     return data.get("contact_email", "").strip() if isinstance(data, dict) else ""
 
 
+def _write_final_body_override(output_dir: Path, body_text: str) -> Path:
+    body = body_text.strip()
+    if not body:
+        raise ValueError("Arquivo de corpo do e-mail está vazio.")
+    paragraphs = "".join(
+        f"<p>{html.escape(part).replace(chr(10), '<br>')}</p>"
+        for part in re.split(r"\n\s*\n", body)
+        if part.strip()
+    )
+    html_path = output_dir / "cover_email_final_override.html"
+    html_path.write_text(
+        "<html><body style='font-family:Arial,Helvetica,sans-serif;color:#111;'>"
+        f"{paragraphs}"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    return html_path
+
+
 def _ensure_manifest_email_review_approved(manifest: dict) -> None:
     if manifest.get("email_review_approved") is True:
         return
@@ -500,20 +609,44 @@ def _ensure_manifest_email_review_approved(manifest: dict) -> None:
     )
 
 
+def _ensure_manifest_application_instructions_complete(manifest: dict) -> None:
+    if manifest.get("application_instructions_pending") is True:
+        raise ValueError(
+            "Envio final bloqueado: existem instruções obrigatórias da vaga pendentes. "
+            "Regere a candidatura com um arquivo de respostas antes de enviar."
+        )
+
+
 def _manifest_string(manifest: dict, key: str) -> str:
     value = manifest.get(key)
     return value.strip() if isinstance(value, str) else ""
 
 
-def _write_send_result(path: Path, result: OutlookComSendResult) -> None:
+def _write_send_result(
+    path: Path,
+    result: OutlookComSendResult,
+    *,
+    override_html_path: Path | None = None,
+    subject_override: str | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             {
                 "recipient_email": result.recipient_email,
                 "subject": result.subject,
+                "subject_override": subject_override,
+                "body_override_html": override_html_path.name if override_html_path else "",
                 "status": result.status,
                 "outbox_matches": result.outbox_matches,
                 "sent_matches": result.sent_matches,
+                "delivery_verification_source": getattr(
+                    result,
+                    "delivery_verification_source",
+                    "outlook_com_local",
+                ),
+                "server_confirmed": getattr(result, "server_confirmed", False),
+                "verification_status": getattr(result, "verification_status", "local_only"),
+                "needs_resend": not getattr(result, "server_confirmed", False),
                 "raw_output": result.raw_output,
             },
             ensure_ascii=False,

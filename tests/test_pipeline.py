@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from job_application_automation.ai_email import AIEmailContent
 from job_application_automation.email_tools import verify_email_address
-from job_application_automation.models import CandidateProfile, EducationEntry, JobPosting
+from job_application_automation.application_instructions import (
+    ApplicationInstructionResult,
+    FulfilledApplicationInstruction,
+)
+from job_application_automation.models import (
+    ApplicationInstruction,
+    CandidateProfile,
+    EducationEntry,
+    JobPosting,
+)
 from job_application_automation.pipeline import build_application_draft
 from job_application_automation.signature import SignatureProfile, build_signature_html, build_signature_text
 
@@ -75,6 +84,47 @@ def test_build_application_draft_does_not_duplicate_subject_prefix():
     )
 
     assert draft.email_subject == "Candidatura - Senior Python Developer"
+
+
+def test_build_application_draft_uses_requested_subject_and_instruction_block():
+    instruction = ApplicationInstruction(
+        text="Link do GitHub (ou portfólio de projetos)",
+        kind="github_or_portfolio",
+        required=True,
+        evidence_hint="github do perfil",
+    )
+    job = JobPosting.from_text(
+        "Dev Full Stack\n"
+        "Envie para leoxcontato@gmail.com com o assunto \"Dev Full Stack\":\n"
+        "1. Link do GitHub (ou portfólio de projetos)"
+    )
+    instruction_result = ApplicationInstructionResult(
+        fulfilled=(
+            FulfilledApplicationInstruction(
+                instruction=instruction,
+                answer="GitHub/portfólio: https://github.com/nilvanlopes",
+                source="profile",
+            ),
+        ),
+        pending=(),
+    )
+
+    draft = build_application_draft(
+        _candidate_profile(),
+        job,
+        "leoxcontato@gmail.com",
+        ai_email_content=AIEmailContent(
+            subject="Dev Full Stack",
+            body="Olá,\n\nTenho interesse na vaga.\n\nTenho aderência ao trabalho.\n\nGostaria de conversar.",
+        ),
+        instruction_result=instruction_result,
+    )
+
+    assert draft.email_subject == "Dev Full Stack"
+    assert "Informações solicitadas para candidatura:" in draft.email_markdown
+    assert "GitHub/portfólio: https://github.com/nilvanlopes" in draft.email_markdown
+    assert draft.email_markdown.index("Informações solicitadas") < draft.email_markdown.index("--")
+    assert "Informações solicitadas" in draft.email_html
 
 
 def test_build_application_draft_preserves_ai_generated_text():
@@ -161,3 +211,26 @@ def test_signature_html_resolves_whatsapp_from_phone_when_profile_link_is_empty(
 
     assert 'href="https://wa.me/5563992230471"' in signature
     assert 'href="" target="_blank"' not in signature
+
+
+def test_signature_html_uses_static_card_contacts_independent_of_profile_contacts():
+    profile = _candidate_profile()
+    profile.email = "outro@example.com"
+    profile.phone = "+55 (11) 99999-9999"
+    profile.github = "https://github.com/outro"
+    profile.linkedin = "https://www.linkedin.com/in/outro"
+    profile.whatsapp = "https://wa.me/5511999999999"
+
+    signature = build_signature_html(SignatureProfile.from_candidate(profile))
+
+    assert "+55 (63) 99223-0471" in signature
+    assert "nilvanlopes@outlook.com" in signature
+    assert 'href="tel:+5563992230471"' in signature
+    assert 'href="mailto:nilvanlopes@outlook.com"' in signature
+    assert 'href="https://www.linkedin.com/in/nilvanlopes"' in signature
+    assert 'href="https://github.com/nilvanlopes"' in signature
+    assert 'href="https://wa.me/5563992230471"' in signature
+    assert "outro@example.com" not in signature
+    assert "99999-9999" not in signature
+    assert "github.com/outro" not in signature
+    assert "linkedin.com/in/outro" not in signature

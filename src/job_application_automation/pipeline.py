@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 
+from .application_instructions import ApplicationInstructionResult, instruction_block_text
 from .ai_email import AIEmailContent
 from .email_tools import format_verification_markdown, verify_email_address
 from .models import ApplicationDraft, CandidateProfile, EmailDraft, JobPosting
@@ -16,6 +17,7 @@ def build_application_draft(
     actual_job_recipient: str | None = None,
     base_resume_markdown: str | None = None,
     ai_email_content: AIEmailContent | None = None,
+    instruction_result: ApplicationInstructionResult | None = None,
 ) -> ApplicationDraft:
     effective_recipient = recipient_email or job.contact_email or ""
     actual_recipient = actual_job_recipient or job.contact_email or effective_recipient
@@ -27,6 +29,7 @@ def build_application_draft(
         effective_recipient,
         include_signature=include_signature,
         ai_email_content=ai_email_content,
+        instruction_result=instruction_result,
     )
     summary = _build_summary(candidate, job, actual_recipient, effective_recipient, match)
     verification_markdown = (
@@ -128,6 +131,7 @@ def _build_email(
     recipient_email: str | None,
     include_signature: bool,
     ai_email_content: AIEmailContent | None,
+    instruction_result: ApplicationInstructionResult | None = None,
 ) -> EmailDraft:
     if ai_email_content is None:
         raise ValueError("ai_email_content is required; fixed email copy is no longer supported")
@@ -135,17 +139,22 @@ def _build_email(
     generated_subject = ai_email_content.subject.strip()
     if not generated_subject:
         raise ValueError("ai_email_content.subject is required")
-    subject = _build_subject(generated_subject)
+    subject = _build_subject(generated_subject, requested_subject=job.requested_email_subject)
     body = ai_email_content.body.strip()
+    instruction_block = instruction_block_text(instruction_result) if instruction_result else ""
+    body_with_instructions = f"{body}\n\n{instruction_block}" if instruction_block else body
 
     signature_profile = SignatureProfile.from_candidate(candidate)
     signature_text = build_signature_text(signature_profile) if include_signature else ""
     signature_html = build_signature_html(signature_profile) if include_signature else ""
-    full_text = f"Subject: {subject}\n\n{body}"
+    full_text = f"Subject: {subject}\n\n{body_with_instructions}"
     if signature_text:
         full_text = f"{full_text}\n\n{signature_text}"
 
-    paragraphs = "".join(f"<p>{html.escape(part).replace(chr(10), '<br>')}</p>" for part in body.split("\n\n"))
+    paragraphs = "".join(
+        f"<p>{html.escape(part).replace(chr(10), '<br>')}</p>"
+        for part in body_with_instructions.split("\n\n")
+    )
     html_body = (
         "<html><body style='font-family:Arial,Helvetica,sans-serif;color:#111;'>"
         f"{paragraphs}"
@@ -157,7 +166,9 @@ def _build_email(
     return EmailDraft(subject=subject, text=full_text, html=html_body, verification=verification)
 
 
-def _build_subject(generated_subject: str) -> str:
+def _build_subject(generated_subject: str, *, requested_subject: str = "") -> str:
+    if requested_subject.strip():
+        return requested_subject.strip()
     prefix = "Candidatura - "
     if generated_subject.lower().startswith(prefix.lower()):
         return generated_subject

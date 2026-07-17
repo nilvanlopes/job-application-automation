@@ -13,12 +13,14 @@ from job_application_automation.ai_email import (
     AIEmailBrief,
     AIEmailBriefMatch,
     AIEmailContent,
+    AIEmailGenerationError,
     AIEmailReview,
     AIEmailReviewAttempt,
     AIEmailReviewCheck,
     AIEmailReviewError,
     ReviewedAIEmailContent,
 )
+from job_application_automation.application_instructions import ApplicationInstructionError
 from job_application_automation.models import CandidateProfile, EducationEntry, JobPosting
 from job_application_automation.optimizer import OptimizedResume
 from job_application_automation import workflow
@@ -180,6 +182,26 @@ def test_job_posting_preserves_title_and_company():
     assert job.contact_email == "vagas@opecsis.com.br"
 
 
+def test_job_posting_ignores_linkedin_screenshot_chrome_before_vacancy():
+    job = JobPosting.from_text(
+        "8:24Qpesquisar\n"
+        "5G\n"
+        ".l 40%\n"
+        "Luiz Henrique Felix gostou\n"
+        "Julia Argueiro in · 2°\n"
+        "Vaga SoftwareDeveloper Jr.\n"
+        "Modelo:100%HomeOffice\n"
+        "Modalidade:PJcominicioimediato\n"
+        "A CoffeeBeanTechnologyestaembuscadeum(a)Software\n"
+        "Developer Jr.paraintegraro time!\n"
+        "Envieseucurriculoparajobs.br@coffeebeantech.comcomo assunto",
+    )
+
+    assert job.title == "Software Developer Jr."
+    assert job.work_model == "100%HomeOffice"
+    assert job.contact_email == "jobs.br@coffeebeantech.com"
+
+
 def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatch, tmp_path, capsys):
     resume, captured = _prepare(monkeypatch, tmp_path)
     output = tmp_path / "application"
@@ -251,6 +273,103 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     assert "[job-application] Iniciando fluxo de candidatura" in logs
     assert "[job-application] Mapeando aderências e gerando o e-mail completo com IA" in logs
     assert "[job-application] Fluxo concluído" in logs
+
+
+INSTRUCTION_JOB_TEXT = """Dev Full Stack - PJ remoto
+
+Como se candidatar:
+Envie para leoxcontato@gmail.com com o assunto "Dev Full Stack":
+1. Currículo ou LinkedIn
+2. Link do GitHub (ou portfólio de projetos)
+3. Sua disponibilidade semanal (horas) e o valor semanal ou por hora que busca
+4. Se tem outros contratos ativos hoje e quanto do seu tempo eles ocupam
+"""
+
+
+def test_run_application_blocks_when_required_application_answers_are_missing(monkeypatch, tmp_path):
+    resume, captured = _prepare(monkeypatch, tmp_path)
+    output = tmp_path / "missing-instructions"
+    monkeypatch.setattr(
+        workflow,
+        "send_outlook_com_email",
+        lambda **kwargs: pytest.fail("Outlook não deveria ser chamado"),
+    )
+
+    with pytest.raises(ApplicationInstructionError, match="Candidatura bloqueada"):
+        workflow.run_application(
+            workflow.ApplicationRequest(
+                job_text=INSTRUCTION_JOB_TEXT,
+                resume_file=resume,
+                output_dir=output,
+                send=True,
+            )
+        )
+
+    pending = json.loads((output / "application_instructions_pending.json").read_text(encoding="utf-8"))
+    assert any(item["kind"] == "availability_and_compensation" for item in pending["pending"])
+    assert any(item["kind"] == "active_contracts" for item in pending["pending"])
+    assert "optimizer" not in captured
+    assert "email_resume" not in captured
+
+
+def test_run_application_uses_answers_and_requested_subject(monkeypatch, tmp_path):
+    resume, _ = _prepare(monkeypatch, tmp_path)
+    output = tmp_path / "answered-instructions"
+    answers = tmp_path / "answers.json"
+    answers.write_text(
+        json.dumps(
+            {
+                "availability": "20 horas semanais",
+                "compensation": "R$ 80 por hora",
+                "active_contracts": "Tenho um contrato ativo ocupando 20 horas semanais.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = workflow.run_application(
+        workflow.ApplicationRequest(
+            job_text=INSTRUCTION_JOB_TEXT,
+            resume_file=resume,
+            output_dir=output,
+            application_answer_file=answers,
+        )
+    )
+
+    manifest = json.loads((output / "application_manifest.json").read_text(encoding="utf-8"))
+    cover_email = (output / "cover_email.md").read_text(encoding="utf-8")
+    assert result.subject == "Dev Full Stack"
+    assert manifest["requested_email_subject"] == "Dev Full Stack"
+    assert manifest["application_instructions_pending"] is False
+    assert "Informações solicitadas para candidatura:" in cover_email
+    assert "20 horas semanais" in cover_email
+    assert "R$ 80 por hora" in cover_email
+    assert "Contratos ativos" in cover_email
+
+
+def test_run_application_saves_generation_failure_artifacts(monkeypatch, tmp_path):
+    resume, _ = _prepare(monkeypatch, tmp_path)
+    output = tmp_path / "application"
+
+    def fail_email(candidate, job, *, resume_markdown, **kwargs):
+        raise AIEmailGenerationError("A IA não retornou aderências factuais para orientar o e-mail.")
+
+    monkeypatch.setattr(workflow, "generate_reviewed_ai_email", fail_email)
+
+    with pytest.raises(AIEmailGenerationError, match="aderências factuais"):
+        workflow.run_application(
+            workflow.ApplicationRequest(
+                job_text=JOB_TEXT,
+                resume_file=resume,
+                output_dir=output,
+            )
+        )
+
+    error_payload = json.loads((output / "email_generation_error.json").read_text(encoding="utf-8"))
+    job_payload = json.loads((output / "job_structured.json").read_text(encoding="utf-8"))
+    assert error_payload["stage"] == "email_generation"
+    assert "aderências factuais" in error_payload["error"]
+    assert job_payload["contact_email"] == "vagas@opecsis.com.br"
 
 
 def test_run_application_uses_managed_ollama_service(monkeypatch, tmp_path):
@@ -428,7 +547,7 @@ def test_send_existing_application_uses_saved_final_recipient(monkeypatch, tmp_p
         return SimpleNamespace(
             recipient_email=kwargs["recipient_email"],
             subject=kwargs["subject"],
-            status="sent",
+            status="submitted_local",
             outbox_matches=0,
             sent_matches=1,
             raw_output="ok",
@@ -444,6 +563,11 @@ def test_send_existing_application_uses_saved_final_recipient(monkeypatch, tmp_p
     assert json.loads((output / "final_send_result.json").read_text(encoding="utf-8"))[
         "recipient_email"
     ] == "final@example.com"
+    result_payload = json.loads((output / "final_send_result.json").read_text(encoding="utf-8"))
+    assert result_payload["status"] == "submitted_local"
+    assert result_payload["server_confirmed"] is False
+    assert result_payload["verification_status"] == "local_only"
+    assert result_payload["needs_resend"] is True
 
 
 def test_send_existing_application_allows_recipient_override(monkeypatch, tmp_path):
@@ -469,7 +593,7 @@ def test_send_existing_application_allows_recipient_override(monkeypatch, tmp_pa
         return SimpleNamespace(
             recipient_email=kwargs["recipient_email"],
             subject=kwargs["subject"],
-            status="sent",
+            status="submitted_local",
             outbox_matches=0,
             sent_matches=1,
             raw_output="ok",
@@ -480,6 +604,55 @@ def test_send_existing_application_allows_recipient_override(monkeypatch, tmp_pa
     result = workflow.send_existing_application(output, recipient_email="override@example.com")
 
     assert result.recipient_email == "override@example.com"
+
+
+def test_send_existing_application_allows_subject_and_body_override(monkeypatch, tmp_path):
+    output = tmp_path / "application"
+    output.mkdir()
+    (output / "cover_email.html").write_text("<html>Email antigo</html>", encoding="utf-8")
+    (output / "resume.pdf").write_bytes(b"%PDF")
+    (output / "application_manifest.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "subject": "Candidatura - Assunto antigo",
+                "final_recipient_email": "saved@example.com",
+                "cover_email_html": "cover_email.html",
+                "resume_pdf": "resume.pdf",
+                "email_review_approved": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    sent = {}
+
+    def fake_send(**kwargs):
+        sent.update(kwargs)
+        return SimpleNamespace(
+            recipient_email=kwargs["recipient_email"],
+            subject=kwargs["subject"],
+            status="submitted_local",
+            outbox_matches=0,
+            sent_matches=1,
+            raw_output="ok",
+        )
+
+    monkeypatch.setattr(workflow, "send_outlook_com_email", fake_send)
+
+    result = workflow.send_existing_application(
+        output,
+        subject="Estágio - Paraíso Tocantins",
+        body_text="Olá, Pedro.\n\nSegue meu currículo.",
+    )
+
+    override_html = output / "cover_email_final_override.html"
+    result_payload = json.loads((output / "final_send_result.json").read_text(encoding="utf-8"))
+    assert result.subject == "Estágio - Paraíso Tocantins"
+    assert sent["subject"] == "Estágio - Paraíso Tocantins"
+    assert sent["html_path"] == override_html
+    assert "Olá, Pedro." in override_html.read_text(encoding="utf-8")
+    assert result_payload["subject_override"] == "Estágio - Paraíso Tocantins"
+    assert result_payload["body_override_html"] == "cover_email_final_override.html"
 
 
 def test_send_existing_application_blocks_unreviewed_artifacts(monkeypatch, tmp_path):
