@@ -1,17 +1,78 @@
 {
   "name": "Nilvan Lopes Cruz",
-  "title": "",
+  "title": "Desenvolvedor Fullstack",
+  "grammatical_gender": "masculino",
   "skills": [
-    "HTML, CSS, JavaScript",
-    "React, Angular",
-    "Git, Visual Studio Code, Figma, Adobe XD",
-    "Componentização, responsividade, consumo de APIs REST"
+    "React",
+    "PHP",
+    "Python",
+    "NodeJS",
+    "SQL",
+    "Git",
+    "Angular",
+    "HTML",
+    "CSS",
+    "JavaScript",
+    "Visual Studio Code",
+    "Figma",
+    "Adobe XD",
+    "Componentização",
+    "Responsividade",
+    "Consumo de APIs REST",
+    "React Native",
+    "NestJS",
+    "Node.js",
+    "Java",
+    "Spring",
+    "Quarkus",
+    "Docker",
+    "AWS",
+    "Windows 10 Enterprise",
+    "Google Workspace",
+    "ITIL",
+    "API REST",
+    "Bancos Relacionais",
+    "Asaas",
+    "WhatsApp API",
+    "Meta API",
+    "Providers Externos",
+    "Engenharia de Software",
+    "Documentação do Produto",
+    "Componentes Modulares",
+    "Integração de APIs",
+    "Gerenciamento de Estado da Aplicação",
+    "Boas Práticas de Versionamento",
+    "Fluxos de CI/CD",
+    "Deploy nas Lojas App Store e Play Store",
+    "Manutenção de Sistema",
+    "Evolução do Sistema",
+    "Atualizações",
+    "Correções de Bugs",
+    "Ajustes de Funcionalidades",
+    "CI/CD",
+    "App Store",
+    "Play Store",
+    "React Context",
+    "Redesign público",
+    "Display",
+    "Animação",
+    "Componentes reutilizáveis",
+    "Landing page",
+    "SASS",
+    "localStorage",
+    "Download",
+    "Upload",
+    "Arquivo JSON local",
+    "Dark mode",
+    "APIs",
+    "Quarkus JPA",
+    "Consumo de APIs"
   ],
   "education": [
     {
       "name": "Análise e Desenvolvimento de Sistemas",
       "institution": "Universidade Estadual do Tocantins (UNITINS)",
-      "status": "Cursando",
+      "status": "cursando",
       "level": "",
       "started_at": "2024",
       "ended_at": "",
@@ -37,7 +98,7 @@
     },
     {
       "name": "Sistemas de Informação",
-      "institution": "UNITINS",
+      "institution": "Universidade Estadual do Tocantins (UNITINS)",
       "status": "",
       "level": "",
       "started_at": "2016",
@@ -62,12 +123,108 @@
   "linkedin": "https://www.linkedin.com/in/nilvanlopes/",
   "whatsapp": "",
   "highlights": [
-    "Desenvolvimento do aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
-    "Participei ativamente da modelagem do sistema, aplicando conceitos da engenharia de software para promover uma entrega profissional do produto e sua documentação.",
-    "Desenvolvi e refatorei componentes modulares em React, integrei APIs REST, gerenciei estado da aplicação e apoiei operações de dados em bancos relacionais.",
-    "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
-    "Garanti qualidade de código, estabilidade do sistema e entregas consistentes dentro do fluxo de desenvolvimento.",
-    "Configurei fluxos de CI/CD e boas práticas de versionamento.",
-    "Participei do deploy do aplicativo nas lojas App Store e Play Store."
-  ]
+    "Desenvolvimento do aplicativo mobile utilizando React Native e NestJS no Fity Ai",
+    "Manutenção e evolução do sistema central da empresa no Niceplanet"
+  ],
+  "experiences": [
+    {
+      "company": "Fity Ai",
+      "role": "Desenvolvedor Fullstack",
+      "project": "Ecossistema FityAi",
+      "started_at": "2026",
+      "ended_at": "",
+      "activities": [
+        "Desenvolvimento do aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
+        "Participei ativamente da modelagem do sistema, aplicando conceitos da engenharia de software para promover uma entrega profissional do produto e sua documentação.",
+        "Desenvolvi e refatorei componentes modulares em React, integrei APIs REST, gerenciei estado da aplicação e apoiei operações de dados em bancos relacionais.",
+        "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
+        "Garanti qualidade de código, estabilidade do sistema e entregas consistentes dentro do fluxo de desenvolvimento.",
+        "Configurei fluxos de CI/CD e boas práticas de versionamento.",
+        "Participei do deploy do aplicativo nas lojas App Store e Play Store."
+      ],
+      "skills": []
+    },
+    {
+      "company": "Niceplanet",
+      "role": "Desenvolvedor Fullstack Junior",
+      "project": "Desenvolvimento do Sistema SMGEO",
+      "started_at": "2025",
+      "ended_at": "",
+      "activities": [
+        "Manutenção e evolução do sistema central da empresa, atuando tanto no front-end quanto no back-end.",
+        "Realizei atualizações, correções de bugs e ajustes de funcionalidades utilizando React, PHP e Node.js.",
+        "Desenvolvi e refatorei componentes modulares em React, integrei APIs REST, gerenciei estado da aplicação com React Context e apoiei operações de dados em bancos relacionais.",
+        "Garanti qualidade de código, estabilidade do sistema e entregas consistentes dentro do fluxo de desenvolvimento."
+      ],
+      "skills": []
+    }
+  ],
+  "projects": [
+    {
+      "name": "Neon Reinvented - Banco Neon",
+      "details": [
+        "Desenvolvi uma landing page utilizando um redesign público",
+        "com foco em display, animação, responsividade e reutilização",
+        "de componentes"
+      ],
+      "references": [
+        "projetocodeboost2.netlify.app"
+      ],
+      "skills": []
+    },
+    {
+      "name": "Landing Page Hostinger",
+      "details": [
+        "Desenvolvi uma landing page para a Hostinger",
+        "com foco em responsividade e uso da tecnologia SASS"
+      ],
+      "references": [
+        "projetocodeboost1.netlify.app"
+      ],
+      "skills": []
+    },
+    {
+      "name": "Site de Ficha de RPG - Vampiro a Máscara",
+      "details": [
+        "Criei um site por hobby para usar com os amigos",
+        "utilizando JS para salvar os dados da página no localStorage",
+        "além de download e upload do arquivo JSON local",
+        "a página é responsiva e possui dark mode"
+      ],
+      "references": [
+        "fichavampiro.netlify.app"
+      ],
+      "skills": []
+    },
+    {
+      "name": "APIs",
+      "details": [
+        "Projetos de criação de APIs: nilvanlopes/quarkus-jpa (GitHub",
+        "Projetos de consumo de APIs: training/santanderBootcamp2023",
+        "at main · nilvanlopes/training"
+      ],
+      "references": [],
+      "skills": []
+    }
+  ],
+  "languages": [
+    {
+      "name": "Inglês",
+      "proficiency": "intermediário (leitura e escrita técnica)",
+      "notes": ""
+    },
+    {
+      "name": "Português",
+      "proficiency": "nativo",
+      "notes": ""
+    }
+  ],
+  "soft_skills": [
+    "Comunicação clara e objetiva",
+    "Troca de experiência favorável para desenvolvimento da equipe, procurando feedback e aperfeiçoamento contínuo",
+    "Rapidez no aprendizado de novas tecnologias e metodologias, especialmente em um ambiente de tecnologia em constante evolução",
+    "Abordagem lógica e orientada a soluções para superar desafios técnicos e de design",
+    "Capacidade de planejar tarefas e cumprir prazos em projetos autônomos e colaborativos"
+  ],
+  "location": "Palmas - TO"
 }

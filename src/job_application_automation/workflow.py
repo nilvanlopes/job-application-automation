@@ -90,7 +90,7 @@ def run_application(
         review_recipient = _resolve_review_recipient(request.review_recipient_email)
         output_dir = resolve_output_dir(job, request.output_dir, now=now)
 
-        _log_step("Gerando e revisando assunto e corpo do e-mail com IA")
+        _log_step("Mapeando aderências e gerando o e-mail completo com IA")
         try:
             reviewed_email = generate_reviewed_ai_email(
                 candidate,
