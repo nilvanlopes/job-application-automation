@@ -6,7 +6,15 @@ services:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
 volumes:
   ollama-models:
+    name: ${JOB_APPLICATION_OLLAMA_VOLUME:-ollama_ollama-data}
