@@ -90,15 +90,22 @@ def managed_ollama_service(
         return
 
     if _is_ollama_ready(config.base_url):
-        if config.pull_model_when_missing:
-            _ensure_models_available(
-                model_names=(config.model_name, config.email_analysis_model_name, config.email_model_name),
-                base_url=config.base_url,
-                compose_file=config.compose_file,
+        try:
+            if config.pull_model_when_missing:
+                _ensure_models_available(
+                    model_names=(config.model_name, config.email_analysis_model_name, config.email_model_name),
+                    base_url=config.base_url,
+                    compose_file=config.compose_file,
+                    runner=runner,
+                    on_event=on_event,
+                )
+            yield
+        finally:
+            _shutdown_ollama_if_configured(
+                config=config,
                 runner=runner,
                 on_event=on_event,
             )
-        yield
         return
 
     if config.compose_file is None:
@@ -138,13 +145,28 @@ def managed_ollama_service(
         yield
     finally:
         if started_by_us and config.shutdown_when_done:
-            if on_event:
-                on_event("Desligando Ollama local")
-            _run_compose(
-                ["down"],
-                compose_file=config.compose_file,
+            _shutdown_ollama_if_configured(
+                config=config,
                 runner=runner,
+                on_event=on_event,
             )
+
+
+def _shutdown_ollama_if_configured(
+    *,
+    config: OllamaServiceConfig,
+    runner: Callable[..., object],
+    on_event: Callable[[str], None] | None,
+) -> None:
+    if not config.shutdown_when_done or config.compose_file is None or not config.compose_file.exists():
+        return
+    if on_event:
+        on_event("Desligando Ollama local")
+    _run_compose(
+        ["down"],
+        compose_file=config.compose_file,
+        runner=runner,
+    )
 
 
 def _is_ollama_ready(base_url: str) -> bool:
