@@ -8,7 +8,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
 
-from .ollama import DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, OllamaError, list_local_models
+from .ollama import (
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_EMAIL_ANALYSIS_MODEL,
+    DEFAULT_OLLAMA_EMAIL_MODEL,
+    DEFAULT_OLLAMA_MODEL,
+    OllamaError,
+    list_local_models,
+)
 
 
 DEFAULT_SHARED_OLLAMA_COMPOSE_FILE = Path("/home/pyu/docker/ollama/docker-compose.yml")
@@ -23,6 +30,8 @@ class OllamaServiceError(RuntimeError):
 class OllamaServiceConfig:
     base_url: str
     model_name: str
+    email_analysis_model_name: str
+    email_model_name: str
     compose_file: Path | None
     manage_service: bool
     shutdown_when_done: bool
@@ -45,6 +54,14 @@ def resolve_ollama_service_config() -> OllamaServiceConfig:
     return OllamaServiceConfig(
         base_url=os.getenv("JOB_APPLICATION_OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL).strip() or DEFAULT_OLLAMA_BASE_URL,
         model_name=os.getenv("JOB_APPLICATION_OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL,
+        email_analysis_model_name=(
+            os.getenv("JOB_APPLICATION_OLLAMA_EMAIL_ANALYSIS_MODEL", DEFAULT_OLLAMA_EMAIL_ANALYSIS_MODEL).strip()
+            or DEFAULT_OLLAMA_EMAIL_ANALYSIS_MODEL
+        ),
+        email_model_name=(
+            os.getenv("JOB_APPLICATION_OLLAMA_EMAIL_MODEL", DEFAULT_OLLAMA_EMAIL_MODEL).strip()
+            or DEFAULT_OLLAMA_EMAIL_MODEL
+        ),
         compose_file=compose_file,
         manage_service=_read_bool_env("JOB_APPLICATION_OLLAMA_MANAGE_SERVICE", default=True),
         shutdown_when_done=_read_bool_env("JOB_APPLICATION_OLLAMA_SHUTDOWN_WHEN_DONE", default=True),
@@ -74,8 +91,8 @@ def managed_ollama_service(
 
     if _is_ollama_ready(config.base_url):
         if config.pull_model_when_missing:
-            _ensure_model_available(
-                model_name=config.model_name,
+            _ensure_models_available(
+                model_names=(config.model_name, config.email_analysis_model_name, config.email_model_name),
                 base_url=config.base_url,
                 compose_file=config.compose_file,
                 runner=runner,
@@ -109,8 +126,8 @@ def managed_ollama_service(
             sleeper=sleeper,
         )
         if config.pull_model_when_missing:
-            _ensure_model_available(
-                model_name=config.model_name,
+            _ensure_models_available(
+                model_names=(config.model_name, config.email_analysis_model_name, config.email_model_name),
                 base_url=config.base_url,
                 compose_file=config.compose_file,
                 runner=runner,
@@ -185,6 +202,24 @@ def _ensure_model_available(
         compose_file=compose_file,
         runner=runner,
     )
+
+
+def _ensure_models_available(
+    *,
+    model_names: tuple[str, ...],
+    base_url: str,
+    compose_file: Path | None,
+    runner: Callable[..., object],
+    on_event: Callable[[str], None] | None,
+) -> None:
+    for model_name in dict.fromkeys(model_names):
+        _ensure_model_available(
+            model_name=model_name,
+            base_url=base_url,
+            compose_file=compose_file,
+            runner=runner,
+            on_event=on_event,
+        )
 
 
 def _model_is_present(models_payload: dict, model_name: str) -> bool:

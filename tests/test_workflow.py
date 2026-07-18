@@ -99,6 +99,12 @@ def _prepare(monkeypatch, tmp_path):
     resume = tmp_path / "base.md"
     resume.write_text("# Currículo base\n\nExperiência real.", encoding="utf-8")
     captured = {}
+
+    @contextmanager
+    def fake_ollama_manager(**kwargs):
+        yield
+
+    monkeypatch.setattr(workflow, "managed_ollama_service", fake_ollama_manager)
     monkeypatch.setattr(
         workflow,
         "generate_candidate_profile",
@@ -198,7 +204,7 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     assert json.loads((output / "job_structured.json").read_text(encoding="utf-8"))["title"] == result.job.title
     logs = capsys.readouterr().out
     assert "[job-application] Iniciando fluxo de candidatura" in logs
-    assert "[job-application] Gerando e revisando assunto e corpo do e-mail com IA" in logs
+    assert "[job-application] Mapeando aderências e gerando o e-mail completo com IA" in logs
     assert "[job-application] Fluxo concluído" in logs
 
 

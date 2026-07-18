@@ -54,6 +54,8 @@ def test_ai_structures_extracted_text_and_preserves_exact_contact(capsys):
     assert captured["payload"]["model"] == DEFAULT_OLLAMA_MODEL
     assert captured["payload"]["stream"] is False
     assert captured["payload"]["options"]["temperature"] == 0
+    assert captured["payload"]["options"]["num_ctx"] == 32768
+    assert captured["payload"]["think"] is False
     assert captured["payload"]["format"]["required"] == [
         "title",
         "company",

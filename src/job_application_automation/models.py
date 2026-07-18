@@ -21,9 +21,36 @@ class EducationEntry:
 
 
 @dataclass(slots=True)
+class ExperienceEntry:
+    company: str
+    role: str = ""
+    project: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    activities: List[str] = field(default_factory=list)
+    skills: List[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class ProjectEntry:
+    name: str
+    details: List[str] = field(default_factory=list)
+    references: List[str] = field(default_factory=list)
+    skills: List[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class LanguageEntry:
+    name: str
+    proficiency: str = ""
+    notes: str = ""
+
+
+@dataclass(slots=True)
 class CandidateProfile:
     name: str
     title: str
+    grammatical_gender: str = ""
     skills: List[str] = field(default_factory=list)
     education: List[EducationEntry] = field(default_factory=list)
     summary: str = ""
@@ -34,6 +61,11 @@ class CandidateProfile:
     linkedin: str = ""
     whatsapp: str = ""
     highlights: List[str] = field(default_factory=list)
+    experiences: List[ExperienceEntry] = field(default_factory=list)
+    projects: List[ProjectEntry] = field(default_factory=list)
+    languages: List[LanguageEntry] = field(default_factory=list)
+    soft_skills: List[str] = field(default_factory=list)
+    location: str = ""
 
     @classmethod
     def default(cls) -> "CandidateProfile":
@@ -48,6 +80,28 @@ class CandidateProfile:
             entry if isinstance(entry, EducationEntry) else EducationEntry(**entry)
             for entry in (data.get("education") or [])
         ]
+        data["experiences"] = [
+            entry if isinstance(entry, ExperienceEntry) else ExperienceEntry(**entry)
+            for entry in (data.get("experiences") or [])
+        ]
+        projects: list[ProjectEntry] = []
+        for entry in data.get("projects") or []:
+            if isinstance(entry, ProjectEntry):
+                projects.append(entry)
+                continue
+            project_data = dict(entry)
+            if "details" not in project_data and "description" in project_data:
+                description = project_data.pop("description")
+                project_data["details"] = [description] if description else []
+            if "references" not in project_data and "links" in project_data:
+                project_data["references"] = project_data.pop("links")
+            projects.append(ProjectEntry(**project_data))
+        data["projects"] = projects
+        data["languages"] = [
+            entry if isinstance(entry, LanguageEntry) else LanguageEntry(**entry)
+            for entry in (data.get("languages") or [])
+        ]
+        data["soft_skills"] = data.get("soft_skills") or []
         return cls(**data)
 
     def to_dict(self) -> dict:

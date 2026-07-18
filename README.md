@@ -55,8 +55,8 @@ revisão automática do e-mail via Ollama local
 - O fluxo tenta subir o Ollama automaticamente quando o endpoint local não está disponível e o derruba ao final da execução, sem interferir se ele já estiver rodando.
 - Por padrão, ele prefere o stack compartilhado em `/home/pyu/docker/ollama/docker-compose.yml` quando esse caminho existe, para reaproveitar o mesmo volume de modelos.
 - O assunto final sempre começa com `Candidatura - `; o complemento do assunto e o corpo usam o perfil, o currículo base e a vaga já estruturada como contexto.
-- O script não reescreve nem corrige o corpo do e-mail gerado; quando a revisão reprova, a IA recebe feedback e gera uma nova versão completa.
-- A revisão automática aprova somente e-mails com qualidade suficiente, sem problemas bloqueantes e com score mínimo de 8.
+- A IA gera o corpo completo do e-mail em um único campo, incluindo saudação e todos os parágrafos; o script não escreve, concatena, reescreve nem corrige a prosa. Quando a revisão reprova, a IA recebe feedback e gera uma nova versão completa.
+- A revisão automática também verifica coesão, repetição entre parágrafos e concordância com o gênero gramatical explícito do candidato. Ela aprova somente e-mails sem problemas bloqueantes e com score mínimo de 9.
 - O PDF anexado é exatamente o PDF produzido pelo `curriculum-optimizer`.
 - O envio de revisão só ocorre quando `--send` é informado.
 - O envio final para a empresa é feito depois, pelo subcomando `send`, reutilizando os artefatos já revisados sem chamar IA ou optimizer novamente.
@@ -70,7 +70,7 @@ revisão automática do e-mail via Ollama local
 - Docker com Compose
 - `curriculum-optimizer` em `/home/pyu/docker/curriculum-optimizer`
 - Serviço local `ollama` disponível em `http://localhost:11434`
-- Modelo `qwen2.5:7b` baixado no Ollama
+- Modelos `qwen2.5:7b`, `qwen3.5:9b` e `qwen2.5:14b-instruct-q3_K_M` baixados no Ollama
 - Outlook Classic configurado no Windows, apenas para `apply --send` e `send`
 - O OCR não exige Tesseract, PowerShell, serviços externos ou outro programa instalado no host.
 - Os modelos do RapidOCR e o ONNX Runtime são instalados por `uv sync`.
@@ -91,7 +91,10 @@ JOB_APPLICATION_OPTIMIZER_ROOT="/caminho/curriculum-optimizer"
 JOB_APPLICATION_OPTIMIZER_TEMPLATE="/caminho/curriculum-optimizer/src/templates/base-curriculum.html"
 JOB_APPLICATION_OLLAMA_BASE_URL="http://localhost:11434/api"
 JOB_APPLICATION_OLLAMA_MODEL="qwen2.5:7b"
+JOB_APPLICATION_OLLAMA_EMAIL_ANALYSIS_MODEL="qwen3.5:9b"
+JOB_APPLICATION_OLLAMA_EMAIL_MODEL="qwen2.5:14b-instruct-q3_K_M"
 JOB_APPLICATION_OLLAMA_COMPOSE_FILE="/home/pyu/docker/job-application-automation/docker-compose.ollama.yml"
+JOB_APPLICATION_OLLAMA_VOLUME="ollama_ollama-data"
 JOB_APPLICATION_OLLAMA_MANAGE_SERVICE="true"
 JOB_APPLICATION_OLLAMA_SHUTDOWN_WHEN_DONE="true"
 JOB_APPLICATION_OLLAMA_STARTUP_TIMEOUT_SECONDS="180"
@@ -102,13 +105,15 @@ LMSTUDIO_MODEL="qwen2.5:7b"
 LMSTUDIO_API_KEY="ollama"
 ```
 
-O modelo padrão do fluxo é `qwen2.5:7b`.
+O modelo padrão `qwen2.5:7b` também faz a revisão estruturada do e-mail. O mapeamento semântico de aderências usa `qwen3.5:9b`, e `qwen2.5:14b-instruct-q3_K_M` escreve o texto final.
 
 ### Subir o Ollama local
 
 ```bash
 docker compose -f docker-compose.ollama.yml up -d
 docker compose -f docker-compose.ollama.yml exec ollama ollama pull qwen2.5:7b
+docker compose -f docker-compose.ollama.yml exec ollama ollama pull qwen3.5:9b
+docker compose -f docker-compose.ollama.yml exec ollama ollama pull qwen2.5:14b-instruct-q3_K_M
 curl http://localhost:11434/api/tags
 ```
 
@@ -116,7 +121,7 @@ Se `JOB_APPLICATION_OLLAMA_MANAGE_SERVICE=true`, o próprio fluxo faz esse contr
 
 - Se `http://localhost:11434/api/tags` responder, ele reutiliza o Ollama já ativo.
 - Se o endpoint não responder, ele executa `docker compose -f <compose-file> up -d ollama`.
-- Se o modelo configurado não existir, ele executa `docker compose -f <compose-file> exec -T ollama ollama pull <model>`.
+- Se algum modelo configurado não existir, ele executa `docker compose -f <compose-file> exec -T ollama ollama pull <model>`.
 - No fim da execução, se o container tiver sido iniciado pelo fluxo, ele executa `docker compose -f <compose-file> down`.
 
 ## Uso do CLI
@@ -237,7 +242,7 @@ output/opecsis-escritorio-contabil-inteligente-programador-php-laravel/
 
 - `job_extracted.md`: texto saneado usado pelo fluxo.
 - `job_structured.json`: cargo, empresa, local, contato, requisitos, diferenciais e benefícios.
-- `profile/candidate.json`: perfil do candidato gerado por IA a partir do currículo padrão e sobrescrito a cada execução.
+- `profile/candidate.json`: perfil do candidato gerado por IA a partir do currículo padrão e sobrescrito a cada execução. A extração percorre o currículo inteiro, consolida competências em itens individuais e preserva experiências, projetos, idiomas e soft skills em campos estruturados. O campo manual `grammatical_gender` não é inferido do nome ou do currículo e é preservado entre regenerações para orientar somente a concordância do texto.
 - `job_summary.md`: candidato, cargo, destinatário real/efetivo e resumo de aderência.
 - `match_report.md`: requisitos atendidos, parciais e lacunas detectadas.
 - `recipient_verification.md`: resultado da validação sintática e MX, quando há destinatário.

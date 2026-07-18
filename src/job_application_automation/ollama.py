@@ -8,6 +8,9 @@ from urllib.request import Request, urlopen
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/api"
 DEFAULT_OLLAMA_MODEL = "qwen2.5:7b"
+DEFAULT_OLLAMA_EMAIL_ANALYSIS_MODEL = "qwen3.5:9b"
+DEFAULT_OLLAMA_EMAIL_MODEL = "qwen2.5:14b-instruct-q3_K_M"
+DEFAULT_OLLAMA_CONTEXT_LENGTH = 32768
 
 
 class OllamaError(RuntimeError):
@@ -20,14 +23,23 @@ def chat_completion(
     model: str | None = None,
     base_url: str | None = None,
     response_format: object | None = None,
+    context_length: int | None = DEFAULT_OLLAMA_CONTEXT_LENGTH,
+    max_output_tokens: int | None = None,
+    think: bool | str = False,
     request_timeout: float = 60.0,
     opener=urlopen,
 ) -> dict:
+    options: dict[str, object] = {"temperature": 0}
+    if context_length is not None:
+        options["num_ctx"] = context_length
+    if max_output_tokens is not None:
+        options["num_predict"] = max_output_tokens
     payload: dict[str, object] = {
         "model": (model or DEFAULT_OLLAMA_MODEL).strip(),
         "messages": messages,
         "stream": False,
-        "options": {"temperature": 0},
+        "think": think,
+        "options": options,
     }
     if response_format is not None:
         payload["format"] = response_format
