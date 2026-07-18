@@ -64,25 +64,34 @@ def _candidate_profile() -> CandidateProfile:
     )
 
 
-def _optimizer_result(tmp_path: Path, template_path: Path | None = None) -> OptimizedResume:
+def _optimizer_result(tmp_path: Path, resume_path: Path) -> OptimizedResume:
     source = tmp_path / "optimizer-result"
     source.mkdir()
-    markdown = source / "resume.md"
-    html = source / "resume.html"
     pdf = source / "resume.pdf"
-    markdown.write_text("# Currículo otimizado", encoding="utf-8")
-    html.write_text("<html>Currículo otimizado</html>", encoding="utf-8")
     pdf.write_bytes(b"%PDF optimizer output")
-    template_hash = sha256(template_path.read_bytes()).hexdigest() if template_path else ""
-    template_mtime = template_path.stat().st_mtime_ns if template_path else 0
+    source_input = source / f"original-curriculum{resume_path.suffix}"
+    source_input.write_bytes(resume_path.read_bytes())
+    base = source / "base-curriculum.html"
+    base.write_text("<!DOCTYPE html><html><body>base</body></html>", encoding="utf-8")
+    base_metadata = {
+        "version": 1,
+        "source": {"sha256": sha256(resume_path.read_bytes()).hexdigest()},
+        "baseSha256": sha256(base.read_bytes()).hexdigest(),
+        "provider": "ollama",
+        "model": "test-model",
+    }
+    metadata_path = source / "base-curriculum.meta.json"
+    metadata_path.write_text(json.dumps(base_metadata), encoding="utf-8")
     return OptimizedResume(
-        markdown,
-        html,
-        pdf,
-        template_source_path=template_path,
-        template_input_path=tmp_path / "optimizer" / "input" / "base-curriculum.html" if template_path else None,
-        template_sha256=template_hash,
-        template_mtime_ns=template_mtime,
+        pdf_path=pdf,
+        source_path=resume_path,
+        source_input_path=source_input,
+        source_sha256=sha256(resume_path.read_bytes()).hexdigest(),
+        base_path=base,
+        base_sha256=sha256(base.read_bytes()).hexdigest(),
+        base_metadata_path=metadata_path,
+        base_metadata_sha256=sha256(metadata_path.read_bytes()).hexdigest(),
+        base_metadata=base_metadata,
     )
 
 
@@ -128,14 +137,11 @@ def _prepare(monkeypatch, tmp_path):
 
     def fake_optimizer(**kwargs):
         captured["optimizer"] = kwargs
-        return _optimizer_result(tmp_path, kwargs["optimizer_template"])
+        return _optimizer_result(tmp_path, kwargs["curriculum_file"])
 
     monkeypatch.setattr(workflow, "generate_reviewed_ai_email", fake_email)
     monkeypatch.setattr(workflow, "run_curriculum_optimizer", fake_optimizer)
     monkeypatch.setenv("JOB_APPLICATION_OPTIMIZER_ROOT", str(tmp_path / "optimizer"))
-    template = tmp_path / "base-curriculum.html"
-    template.write_text("<html>base</html>", encoding="utf-8")
-    monkeypatch.setenv("JOB_APPLICATION_OPTIMIZER_TEMPLATE", str(template))
     return resume, captured
 
 
@@ -164,6 +170,7 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
             resume_file=resume,
             output_dir=output,
             send=True,
+            optimizer_provider="ollama",
         )
     )
 
@@ -176,7 +183,8 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     )
     assert captured["candidate_profile_call"]["profile_path"].name == "candidate.json"
     assert captured["email_resume"].startswith("# Currículo base")
-    assert captured["optimizer"]["optimizer_template"].name == "base-curriculum.html"
+    assert captured["optimizer"]["curriculum_file"] == resume
+    assert captured["optimizer"]["provider"] == "ollama"
     assert captured["optimizer"]["job"].raw_text == result.job.raw_text
     expected_pdf = output / "Currículo_Nilvan_Lopes_Programador_PHP_Laravel.pdf"
     assert sent["recipient_email"] == "pyuloko7@gmail.com"
@@ -187,9 +195,14 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     assert manifest["final_recipient_email"] == "teste@example.com"
     assert manifest["resume_pdf"] == expected_pdf.name
     assert manifest["cover_email_html"] == "cover_email.html"
-    assert manifest["optimizer_template_source"] == str(captured["optimizer"]["optimizer_template"])
-    assert manifest["optimizer_template_sha256"] == sha256(b"<html>base</html>").hexdigest()
-    assert manifest["optimizer_template_mtime_ns"] == captured["optimizer"]["optimizer_template"].stat().st_mtime_ns
+    assert manifest["manifest_version"] == 2
+    assert manifest["optimizer_source_path"] == str(resume)
+    assert manifest["optimizer_source_sha256"] == sha256(resume.read_bytes()).hexdigest()
+    assert manifest["optimizer_base_sha256"] == sha256(b"<!DOCTYPE html><html><body>base</body></html>").hexdigest()
+    assert manifest["optimizer_base_metadata"]["provider"] == "ollama"
+    assert manifest["optimizer_base_metadata_sha256"] == sha256(
+        Path(manifest["optimizer_base_metadata_path"]).read_bytes()
+    ).hexdigest()
     assert manifest["email_review_approved"] is True
     assert manifest["email_review_score"] == 9
     assert manifest["email_review_attempts"] == 1
@@ -199,8 +212,8 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     assert review_payload["approved"] is True
     assert review_payload["attempts"] == 1
     assert (output / "email_review.md").exists()
-    assert (output / "resume_optimized.md").exists()
-    assert (output / "resume_optimized.html").exists()
+    assert not (output / "resume_optimized.md").exists()
+    assert not (output / "resume_optimized.html").exists()
     assert json.loads((output / "job_structured.json").read_text(encoding="utf-8"))["title"] == result.job.title
     logs = capsys.readouterr().out
     assert "[job-application] Iniciando fluxo de candidatura" in logs

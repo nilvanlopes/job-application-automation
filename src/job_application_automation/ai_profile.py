@@ -20,6 +20,7 @@ from .ollama import (
     chat_completion,
 )
 from .paths import CANDIDATE_PROFILE_PATH
+from .resume_reader import read_resume_text
 
 
 class CandidateProfileGenerationError(RuntimeError):
@@ -55,7 +56,7 @@ def generate_candidate_profile(
     request_timeout: float = 180.0,
     opener=None,
 ) -> CandidateProfile:
-    resume_text = resume_path.read_text(encoding="utf-8")
+    resume_text = read_resume_text(resume_path)
     grammatical_gender = _existing_grammatical_gender(profile_path)
     resolved_model = (model or DEFAULT_OLLAMA_MODEL).strip()
     kwargs = {}

@@ -22,18 +22,12 @@ from .optimizer import OptimizedResume, copy_optimizer_outputs, run_curriculum_o
 from .paths import CANDIDATE_PROFILE_PATH, DEFAULT_RESUME_PATH
 from .outlook_com_mailer import OutlookComConfig, OutlookComSendResult, send_outlook_com_email
 from .pipeline import build_application_draft
+from .resume_reader import read_resume_text
 
 
 DEFAULT_OPTIMIZER_ROOT = Path("/home/pyu/docker/curriculum-optimizer")
-DEFAULT_OPTIMIZER_TEMPLATE = DEFAULT_OPTIMIZER_ROOT / "src/templates/base-curriculum.html"
-DEFAULT_OPTIMIZER_AI_ENV = {
-    "AI_PROVIDER": "lmstudio",
-    "LMSTUDIO_BASE_URL": "http://host.docker.internal:11434/v1",
-    "LMSTUDIO_MODEL": "qwen2.5:7b",
-    "LMSTUDIO_API_KEY": "ollama",
-}
 DEFAULT_REVIEW_RECIPIENT_EMAIL = "pyuloko7@gmail.com"
-APPLICATION_MANIFEST_VERSION = 1
+APPLICATION_MANIFEST_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +40,7 @@ class ApplicationRequest:
     send: bool = False
     sender_email: str = "nilvanlopes@outlook.com"
     optimizer_output_name: str = ""
-    optimizer_template: Path | None = None
+    optimizer_provider: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +70,7 @@ def run_application(
         if not resume_path.exists():
             raise FileNotFoundError(f"Arquivo de currículo não encontrado: {resume_path}")
         _log_step(f"Carregando currículo base: {resume_path}")
-        resume_markdown = resume_path.read_text(encoding="utf-8")
+        resume_text = read_resume_text(resume_path)
 
         _log_step("Gerando profile do candidato com IA")
         candidate = generate_candidate_profile(
@@ -95,7 +89,7 @@ def run_application(
             reviewed_email = generate_reviewed_ai_email(
                 candidate,
                 job,
-                resume_markdown=resume_markdown,
+                resume_markdown=resume_text,
             )
         except AIEmailReviewError as exc:
             output_dir.mkdir(parents=True, exist_ok=False)
@@ -109,7 +103,7 @@ def run_application(
             job,
             final_recipient or None,
             actual_job_recipient=job.contact_email or final_recipient or None,
-            base_resume_markdown=resume_markdown,
+            base_resume_markdown=resume_text,
             ai_email_content=reviewed_email.email,
         )
 
@@ -117,17 +111,18 @@ def run_application(
         optimizer_root = Path(
             os.getenv("JOB_APPLICATION_OPTIMIZER_ROOT", str(DEFAULT_OPTIMIZER_ROOT))
         )
-        optimizer_template = request.optimizer_template or Path(
-            os.getenv("JOB_APPLICATION_OPTIMIZER_TEMPLATE", str(DEFAULT_OPTIMIZER_TEMPLATE))
-        )
-        _ensure_local_optimizer_env()
         optimized = run_curriculum_optimizer(
             optimizer_root=optimizer_root,
-            optimizer_template=optimizer_template,
+            curriculum_file=resume_path,
             job=job,
             output_name=request.optimizer_output_name or None,
+            provider=request.optimizer_provider or None,
         )
-        _log_step(f"Template do optimizer: {optimizer_template} sha256={optimized.template_sha256}")
+        _log_step(
+            f"Currículo original do optimizer: {optimized.source_input_path} "
+            f"sha256={optimized.source_sha256}"
+        )
+        _log_step(f"Currículo base gerado: {optimized.base_path} sha256={optimized.base_sha256}")
         _log_step("Copiando artefatos finais")
         copied_resume = copy_optimizer_outputs(
             optimized,
@@ -385,10 +380,14 @@ def _write_manifest(
         "job_contact_email": job.contact_email,
         "cover_email_html": html_path.name,
         "resume_pdf": pdf_path.name,
-        "optimizer_template_source": str(optimized_resume.template_source_path or ""),
-        "optimizer_template_input": str(optimized_resume.template_input_path or ""),
-        "optimizer_template_sha256": optimized_resume.template_sha256,
-        "optimizer_template_mtime_ns": optimized_resume.template_mtime_ns,
+        "optimizer_source_path": str(optimized_resume.source_path),
+        "optimizer_source_input": str(optimized_resume.source_input_path),
+        "optimizer_source_sha256": optimized_resume.source_sha256,
+        "optimizer_base_path": str(optimized_resume.base_path),
+        "optimizer_base_sha256": optimized_resume.base_sha256,
+        "optimizer_base_metadata_path": str(optimized_resume.base_metadata_path),
+        "optimizer_base_metadata_sha256": optimized_resume.base_metadata_sha256,
+        "optimizer_base_metadata": optimized_resume.base_metadata,
         "email_review_approved": reviewed_email.final_review.passed,
         "email_review_score": reviewed_email.final_review.score,
         "email_review_attempts": len(reviewed_email.attempts),
@@ -462,8 +461,3 @@ def _log_step(message: str) -> None:
 
 def _job_extracted_markdown(job: JobPosting) -> str:
     return f"# Texto extraído da vaga\n\n```text\n{job.raw_text}\n```\n"
-
-
-def _ensure_local_optimizer_env() -> None:
-    for key, value in DEFAULT_OPTIMIZER_AI_ENV.items():
-        os.environ.setdefault(key, value)

@@ -86,9 +86,9 @@ def _add_apply_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--optimizer-output-name", default="")
     parser.add_argument(
-        "--optimizer-template",
-        type=Path,
-        help="Template HTML canônico usado pelo curriculum-optimizer.",
+        "--optimizer-provider",
+        default="",
+        help="Sobrescreve o provider configurado no .env do curriculum-optimizer nesta execução.",
     )
 
 
@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
                 send=args.send,
                 sender_email=args.sender_email,
                 optimizer_output_name=args.optimizer_output_name,
-                optimizer_template=args.optimizer_template,
+                optimizer_provider=args.optimizer_provider,
             )
         )
     except (FileExistsError, FileNotFoundError, RuntimeError, ValueError) as exc:
