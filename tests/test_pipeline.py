@@ -4,7 +4,7 @@ from job_application_automation.ai_email import AIEmailContent
 from job_application_automation.email_tools import verify_email_address
 from job_application_automation.models import CandidateProfile, EducationEntry, JobPosting
 from job_application_automation.pipeline import build_application_draft
-from job_application_automation.signature import SignatureProfile, build_signature_text
+from job_application_automation.signature import SignatureProfile, build_signature_html, build_signature_text
 
 
 def _candidate_profile() -> CandidateProfile:
@@ -125,4 +125,39 @@ def test_signature_text_contains_contact_details():
 
     assert "Nilvan Lopes" in signature
     assert "nilvanlopes@outlook.com" in signature
-from job_application_automation.models import CandidateProfile, EducationEntry, JobPosting
+    assert "W:" not in signature
+
+
+def test_signature_html_matches_mail_signature_layout():
+    signature = build_signature_html(SignatureProfile.from_candidate(_candidate_profile()))
+
+    assert "assets/background.png" in signature
+    assert 'width="600"' in signature
+    assert 'class="nl-signature-card"' in signature
+    assert "width:100%; max-width:600px" in signature
+    assert "min-height:200px" in signature
+    assert "background-image:url('https://raw.githubusercontent.com/nilvanlopes/mail-signature/main/assets/background.png')" in signature
+    assert "border-bottom:6px solid #d4af37" in signature
+    assert "border-radius:12px; overflow:hidden" in signature
+    assert "border-collapse:separate; border-spacing:0" in signature
+    assert "max-height:0" not in signature
+    assert 'height="6" valign="bottom"' not in signature
+    assert '<td valign="top" class="nl-signature-pad" style="padding:15px 30px 18px 18px;">' in signature
+    assert "font-size:12.5px; line-height:14px; color:#ffffff" in signature
+    assert 'href="tel:+5563992230471"' in signature
+    assert 'href="mailto:nilvanlopes@outlook.com"' in signature
+    assert 'href="https://www.linkedin.com/in/nilvanlopes"' in signature
+    assert 'href="https://github.com/nilvanlopes"' in signature
+    assert "linear-gradient" not in signature
+    assert "Website disabled for now" in signature
+    assert 'href="https://wa.me/5563992230471"' in signature
+
+
+def test_signature_html_resolves_whatsapp_from_phone_when_profile_link_is_empty():
+    profile = _candidate_profile()
+    profile.whatsapp = ""
+
+    signature = build_signature_html(SignatureProfile.from_candidate(profile))
+
+    assert 'href="https://wa.me/5563992230471"' in signature
+    assert 'href="" target="_blank"' not in signature
