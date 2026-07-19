@@ -10,9 +10,12 @@ from hashlib import sha256
 import pytest
 
 from job_application_automation.ai_email import (
+    AIEmailBrief,
+    AIEmailBriefMatch,
     AIEmailContent,
     AIEmailReview,
     AIEmailReviewAttempt,
+    AIEmailReviewCheck,
     AIEmailReviewError,
     ReviewedAIEmailContent,
 )
@@ -97,10 +100,28 @@ def _optimizer_result(tmp_path: Path, resume_path: Path) -> OptimizedResume:
 
 def _reviewed_email(subject: str, body: str) -> ReviewedAIEmailContent:
     email = AIEmailContent(subject=subject, body=body)
-    review = AIEmailReview(approved=True, score=9, issues=(), feedback="")
+    review = AIEmailReview(
+        approved=True,
+        score=9,
+        issues=(),
+        feedback="",
+        checks=(AIEmailReviewCheck("factual_fidelity", True, "Critério atendido."),),
+    )
+    brief = AIEmailBrief(
+        matches=(
+            AIEmailBriefMatch(
+                category="requisito",
+                vacancy_priority="Experiência com PHP",
+                candidate_evidence="PHP",
+                source_field="skills[0]",
+                source_kind="skill",
+            ),
+        )
+    )
     return ReviewedAIEmailContent(
         email=email,
         attempts=(AIEmailReviewAttempt(number=1, email=email, review=review),),
+        alignment_brief=brief,
     )
 
 
@@ -117,19 +138,25 @@ def _prepare(monkeypatch, tmp_path):
     monkeypatch.setattr(
         workflow,
         "generate_candidate_profile",
-        lambda resume_path, profile_path=None: captured.setdefault(
+        lambda resume_path, profile_path=None, **kwargs: captured.setdefault(
             "candidate_profile_call",
-            {"resume_path": resume_path, "profile_path": profile_path, "candidate": _candidate_profile()},
+            {
+                "resume_path": resume_path,
+                "profile_path": profile_path,
+                "candidate": _candidate_profile(),
+                "ai_client": kwargs.get("ai_client"),
+            },
         )["candidate"],
     )
     monkeypatch.setattr(
         workflow,
         "extract_job_with_ai",
-        lambda text: JobPosting.from_text(text),
+        lambda text, **kwargs: JobPosting.from_text(text),
     )
 
-    def fake_email(candidate, job, *, resume_markdown):
+    def fake_email(candidate, job, *, resume_markdown, **kwargs):
         captured["email_resume"] = resume_markdown
+        captured["email_ai_client"] = kwargs.get("ai_client")
         return _reviewed_email(
             subject="Interesse na vaga de Programador PHP / Laravel",
             body="Olá.\n\nTenho interesse na vaga.\n\nAtenciosamente,",
@@ -211,6 +238,11 @@ def test_run_application_sends_review_email_and_saves_final_recipient(monkeypatc
     review_payload = json.loads((output / "email_review.json").read_text(encoding="utf-8"))
     assert review_payload["approved"] is True
     assert review_payload["attempts"] == 1
+    assert review_payload["alignment_brief"]["matches"][0]["candidate_evidence"] == "PHP"
+    assert review_payload["items"][0]["revision_directives"] == []
+    assert review_payload["items"][0]["metrics"]["paragraphs_after_greeting"] == 3
+    assert review_payload["items"][0]["review"]["source"] == "ai"
+    assert review_payload["items"][0]["review"]["checks"][0]["name"] == "factual_fidelity"
     assert (output / "email_review.md").exists()
     assert not (output / "resume_optimized.md").exists()
     assert not (output / "resume_optimized.html").exists()
@@ -250,6 +282,31 @@ def test_run_application_uses_managed_ollama_service(monkeypatch, tmp_path):
     assert lifecycle["exited"] == 1
     assert result.recipient_email == "teste@example.com"
     assert result.final_recipient_email == "teste@example.com"
+
+
+def test_run_application_does_not_manage_ollama_when_order_excludes_it(monkeypatch, tmp_path):
+    resume, captured = _prepare(monkeypatch, tmp_path)
+    monkeypatch.setenv("JOB_APPLICATION_PROVIDERS_ORDER", "gemini")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(
+        workflow,
+        "managed_ollama_service",
+        lambda **kwargs: pytest.fail("Ollama não deveria ser gerenciado"),
+    )
+
+    result = workflow.run_application(
+        workflow.ApplicationRequest(
+            job_text=JOB_TEXT,
+            recipient_email="teste@example.com",
+            resume_file=resume,
+            output_dir=tmp_path / "application-without-ollama",
+            send=False,
+        )
+    )
+
+    assert result.final_recipient_email == "teste@example.com"
+    assert captured["candidate_profile_call"]["ai_client"] is not None
+    assert captured["email_ai_client"] is not None
 
 
 def test_run_application_without_send_uses_discovered_recipient_and_never_calls_outlook(monkeypatch, tmp_path):

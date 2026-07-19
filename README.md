@@ -1,6 +1,6 @@
 # Job Application Automation
 
-Orquestrador Python que transforma uma vaga em uma candidatura personalizada. Ele extrai a vaga, gera e revisa o e-mail com Ollama, chama o `curriculum-optimizer` com o mesmo currículo original e, opcionalmente, envia uma cópia para revisão pelo Outlook Classic.
+Orquestrador Python que transforma uma vaga em uma candidatura personalizada. Ele extrai a vaga, gera e revisa o e-mail com fallback entre providers de IA, chama o `curriculum-optimizer` com o mesmo currículo original e, opcionalmente, envia uma cópia para revisão pelo Outlook Classic.
 
 ## Fluxo
 
@@ -31,11 +31,12 @@ Regras principais:
 - `apply --send` envia a cópia de revisão, por padrão para `pyuloko7@gmail.com`;
 - `send --output-dir` envia os artefatos aprovados à empresa sem IA, OCR ou optimizer;
 - o PDF do optimizer é o único currículo copiado e anexado;
-- `.env` do optimizer define o provider, salvo quando `--optimizer-provider` é informado.
+- o provider do job app segue `JOB_APPLICATION_PROVIDERS_ORDER`, salvo quando `--provider` é informado;
+- `.env` do optimizer define o provider do optimizer, salvo quando `--optimizer-provider` é informado.
 
 ## Instalação
 
-Requisitos: Python 3.11+, `uv`, Docker Compose, Ollama local e Outlook Classic para envios.
+Requisitos: Python 3.11+, `uv`, Docker Compose se usar Ollama gerenciado, credenciais dos providers remotos escolhidos e Outlook Classic para envios.
 
 ```bash
 uv sync
@@ -48,15 +49,24 @@ OUTLOOK_COM_SENDER_EMAIL="nilvanlopes@outlook.com"
 JOB_APPLICATION_REVIEW_EMAIL="pyuloko7@gmail.com"
 JOB_APPLICATION_DEFAULT_RESUME="/caminho/curriculo.md"
 JOB_APPLICATION_OPTIMIZER_ROOT="/home/pyu/docker/curriculum-optimizer"
+JOB_APPLICATION_PROVIDERS_ORDER="gemini,openrouter,ollama"
+GOOGLE_API_KEY=""
+GOOGLE_MODEL="gemini-3.5-flash"
+OPENROUTER_API_KEY=""
+OPENROUTER_MODEL="nvidia/nemotron-3-super-120b-a12b:free"
 JOB_APPLICATION_OLLAMA_BASE_URL="http://localhost:11434/api"
 JOB_APPLICATION_OLLAMA_MODEL="qwen2.5:7b"
 JOB_APPLICATION_OLLAMA_EMAIL_ANALYSIS_MODEL="qwen3.5:9b"
-JOB_APPLICATION_OLLAMA_EMAIL_MODEL="qwen2.5:14b-instruct-q3_K_M"
+JOB_APPLICATION_OLLAMA_EMAIL_MODEL="qwen3.5:9b"
 JOB_APPLICATION_OLLAMA_MANAGE_SERVICE="true"
 JOB_APPLICATION_OLLAMA_SHUTDOWN_WHEN_DONE="true"
 ```
 
-O orquestrador não injeta mais `AI_PROVIDER=lmstudio`. Configure o provider no `.env` do `curriculum-optimizer` ou use o override do CLI.
+O job app usa `JOB_APPLICATION_PROVIDERS_ORDER` para não vazar `PROVIDERS_ORDER` para o `curriculum-optimizer`. A ordem padrão é `gemini,openrouter,ollama`: providers sem env obrigatório são pulados; falhas de HTTP, rede, quota, resposta vazia, truncamento ou JSON inválido marcam o provider como indisponível pelo restante da execução e a mesma chamada segue no próximo provider. Use `--provider` quando quiser tentar somente um provider, sem fallback.
+
+Providers aceitos no job app: `gemini`, `openrouter`, `openai`, `anthropic`, `claude` como alias de `anthropic`, `lmstudio` e `ollama`. OpenRouter exige modelo com `:free`.
+
+O provider do `curriculum-optimizer` é separado. Configure-o no `.env` do optimizer ou use `--optimizer-provider`; essa opção não altera a IA usada pelo job app.
 
 ## Uso
 
@@ -74,8 +84,26 @@ Imagem, provider específico e envio para revisão:
 uv run job-application-automation apply \
   --job-image input/vaga.png \
   --resume-file input/curriculo.md \
+  --provider gemini \
   --optimizer-provider ollama \
   --send
+```
+
+Fallback padrão Gemini -> OpenRouter -> Ollama:
+
+```bash
+JOB_APPLICATION_PROVIDERS_ORDER="gemini,openrouter,ollama" \
+uv run job-application-automation apply \
+  --job-file input/vaga.txt \
+  --resume-file input/curriculo.md
+```
+
+Forçar somente Ollama no job app:
+
+```bash
+uv run job-application-automation apply \
+  --job-text "Vaga Python. Enviar para vagas@example.com" \
+  --provider ollama
 ```
 
 Não informe `--recipient-email` no primeiro `apply --send` automático apenas
@@ -102,8 +130,9 @@ Opções de `apply`:
 | `--output-dir PATH` | Diretório novo da execução. |
 | `--send` | Envia a cópia para revisão. |
 | `--sender-email EMAIL` | Conta do Outlook. |
+| `--provider PROVIDER` | Override do provider de IA do job app; quando informado, não usa fallback. |
 | `--optimizer-output-name NAME` | Nome interno do PDF no optimizer. |
-| `--optimizer-provider PROVIDER` | Override opcional de `--provider` no optimizer. |
+| `--optimizer-provider PROVIDER` | Override opcional de `--provider` no optimizer; não altera a IA do job app. |
 
 ## Integração com o optimizer
 

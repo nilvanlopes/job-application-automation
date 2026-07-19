@@ -3,15 +3,19 @@ from __future__ import annotations
 import json
 import os
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from .ai_client import create_ai_client, providers_need_ollama
 from .ai_email import (
+    AIEmailBrief,
     AIEmailReviewAttempt,
     AIEmailReviewError,
     ReviewedAIEmailContent,
+    _email_body_metrics,
     generate_reviewed_ai_email,
 )
 from .ai_job import extract_job_with_ai
@@ -39,6 +43,7 @@ class ApplicationRequest:
     output_dir: Path | None = None
     send: bool = False
     sender_email: str = "nilvanlopes@outlook.com"
+    provider: str = ""
     optimizer_output_name: str = ""
     optimizer_provider: str = ""
 
@@ -61,7 +66,13 @@ def run_application(
     *,
     now: Callable[[], datetime] = datetime.now,
 ) -> ApplicationResult:
-    with managed_ollama_service(on_event=_log_step):
+    ai_client = create_ai_client(provider=request.provider, on_event=_log_step)
+    ollama_context = (
+        managed_ollama_service(on_event=_log_step)
+        if providers_need_ollama(request.provider)
+        else nullcontext()
+    )
+    with ollama_context:
         _log_step("Iniciando fluxo de candidatura")
         candidate_resume_path = Path(
             os.getenv("JOB_APPLICATION_DEFAULT_RESUME", str(DEFAULT_RESUME_PATH))
@@ -76,9 +87,10 @@ def run_application(
         candidate = generate_candidate_profile(
             resume_path,
             profile_path=CANDIDATE_PROFILE_PATH,
+            ai_client=ai_client,
         )
         _log_step("Estruturando vaga com IA")
-        job = extract_job_with_ai(request.job_text)
+        job = extract_job_with_ai(request.job_text, ai_client=ai_client)
         _log_step(f"Vaga estruturada: {job.title}")
         final_recipient = request.recipient_email.strip() or job.contact_email.strip()
         review_recipient = _resolve_review_recipient(request.review_recipient_email)
@@ -90,10 +102,15 @@ def run_application(
                 candidate,
                 job,
                 resume_markdown=resume_text,
+                ai_client=ai_client,
             )
         except AIEmailReviewError as exc:
             output_dir.mkdir(parents=True, exist_ok=False)
-            _write_failed_email_review_artifacts(output_dir, exc.attempts)
+            _write_failed_email_review_artifacts(
+                output_dir,
+                exc.attempts,
+                alignment_brief=exc.alignment_brief,
+            )
             _write_job_debug_artifacts(output_dir, job)
             _log_step(f"Revisão automática reprovou o e-mail; detalhes salvos em {output_dir}")
             raise
@@ -267,11 +284,21 @@ def _write_job_debug_artifacts(output_dir: Path, job: JobPosting) -> None:
 
 def _write_email_review_artifacts(output_dir: Path, reviewed_email: ReviewedAIEmailContent) -> None:
     (output_dir / "email_review.json").write_text(
-        json.dumps(_email_review_payload(reviewed_email.attempts), ensure_ascii=False, indent=2),
+        json.dumps(
+            _email_review_payload(
+                reviewed_email.attempts,
+                alignment_brief=reviewed_email.alignment_brief,
+            ),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     (output_dir / "email_review.md").write_text(
-        _email_review_markdown(reviewed_email.attempts),
+        _email_review_markdown(
+            reviewed_email.attempts,
+            alignment_brief=reviewed_email.alignment_brief,
+        ),
         encoding="utf-8",
     )
 
@@ -279,34 +306,57 @@ def _write_email_review_artifacts(output_dir: Path, reviewed_email: ReviewedAIEm
 def _write_failed_email_review_artifacts(
     output_dir: Path,
     attempts: tuple[AIEmailReviewAttempt, ...],
+    *,
+    alignment_brief: AIEmailBrief | None = None,
 ) -> None:
     (output_dir / "email_review.json").write_text(
-        json.dumps(_email_review_payload(attempts), ensure_ascii=False, indent=2),
+        json.dumps(
+            _email_review_payload(attempts, alignment_brief=alignment_brief),
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding="utf-8",
     )
     (output_dir / "email_review.md").write_text(
-        _email_review_markdown(attempts),
+        _email_review_markdown(attempts, alignment_brief=alignment_brief),
         encoding="utf-8",
     )
 
 
-def _email_review_payload(attempts: tuple[AIEmailReviewAttempt, ...]) -> dict:
+def _email_review_payload(
+    attempts: tuple[AIEmailReviewAttempt, ...],
+    *,
+    alignment_brief: AIEmailBrief | None = None,
+) -> dict:
     final_review = attempts[-1].review if attempts else None
     return {
         "approved": bool(final_review and final_review.passed),
         "attempts": len(attempts),
         "final_score": final_review.score if final_review else 0,
+        "alignment_brief": alignment_brief.to_dict() if alignment_brief else None,
         "items": [
             {
                 "attempt": attempt.number,
+                "revision_directives": list(attempt.revision_directives),
                 "subject": attempt.email.subject,
                 "body": attempt.email.body,
+                "metrics": _email_body_metrics(attempt.email.body),
                 "review": {
+                    "source": attempt.review.source,
                     "approved": attempt.review.approved,
                     "passed": attempt.review.passed,
                     "score": attempt.review.score,
                     "issues": list(attempt.review.issues),
                     "feedback": attempt.review.feedback,
+                    "checks": [
+                        {
+                            "name": check.name,
+                            "passed": check.passed,
+                            "details": check.details,
+                            "correction": check.correction,
+                        }
+                        for check in attempt.review.checks
+                    ],
                 },
             }
             for attempt in attempts
@@ -314,8 +364,12 @@ def _email_review_payload(attempts: tuple[AIEmailReviewAttempt, ...]) -> dict:
     }
 
 
-def _email_review_markdown(attempts: tuple[AIEmailReviewAttempt, ...]) -> str:
-    payload = _email_review_payload(attempts)
+def _email_review_markdown(
+    attempts: tuple[AIEmailReviewAttempt, ...],
+    *,
+    alignment_brief: AIEmailBrief | None = None,
+) -> str:
+    payload = _email_review_payload(attempts, alignment_brief=alignment_brief)
     lines = [
         "# Revisão automática do e-mail",
         "",
@@ -333,11 +387,33 @@ def _email_review_markdown(attempts: tuple[AIEmailReviewAttempt, ...]) -> str:
                 f"- Aprovado pela revisão: {'sim' if review['approved'] else 'não'}",
                 f"- Passou no fluxo: {'sim' if review['passed'] else 'não'}",
                 f"- Score: {review['score']}",
+                f"- Origem da revisão: {review['source']}",
+                f"- Palavras depois da saudação: {item['metrics']['word_count_after_greeting']}",
+                f"- Parágrafos depois da saudação: {item['metrics']['paragraphs_after_greeting']}",
                 "",
-                "### Problemas bloqueantes",
+                "### Correções recebidas nesta geração",
                 "",
             ]
         )
+        lines.extend([f"- {directive}" for directive in item["revision_directives"]] or ["- Nenhuma"])
+        lines.extend(
+            [
+                "",
+                "### Controles",
+                "",
+            ]
+        )
+        checks = review["checks"]
+        lines.extend(
+            [
+                f"- {check['name']}: {'passou' if check['passed'] else 'reprovou'} — "
+                f"{check['details'] or 'Sem detalhes.'}"
+                + (f" Correção: {check['correction']}" if check["correction"] else "")
+                for check in checks
+            ]
+            or ["- Nenhum controle registrado"]
+        )
+        lines.extend(["", "### Problemas bloqueantes", ""])
         issues = review["issues"]
         lines.extend([f"- {issue}" for issue in issues] or ["- Nenhum"])
         lines.extend(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from .ai_client import AIClient, AIProviderError
 from .json_utils import parse_strict_json_object
 from .models import JobPosting
 from .ollama import DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, OllamaError, chat_completion
@@ -18,6 +19,7 @@ def extract_job_with_ai(
     model: str | None = None,
     request_timeout: float = 90.0,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> JobPosting:
     baseline = JobPosting.from_text(text)
     resolved_model = (model or DEFAULT_OLLAMA_MODEL).strip()
@@ -25,15 +27,23 @@ def extract_job_with_ai(
     if opener is not None:
         kwargs["opener"] = opener
     try:
-        response_payload = chat_completion(
-            _build_messages(baseline.raw_text),
-            base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
-            model=resolved_model,
-            response_format=_schema(),
-            request_timeout=request_timeout,
-            **kwargs,
-        )
-    except OllamaError as exc:
+        if ai_client is not None:
+            response_payload = ai_client.call_json(
+                _build_messages(baseline.raw_text),
+                response_format=_schema(),
+                model_role="default",
+                request_timeout=request_timeout,
+            )
+        else:
+            response_payload = chat_completion(
+                _build_messages(baseline.raw_text),
+                base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
+                model=resolved_model,
+                response_format=_schema(),
+                request_timeout=request_timeout,
+                **kwargs,
+            )
+    except (OllamaError, AIProviderError) as exc:
         raise AIJobExtractionError(str(exc)) from exc
 
     content = _extract_output_text(response_payload)
@@ -41,9 +51,7 @@ def extract_job_with_ai(
     try:
         data = parse_strict_json_object(content)
     except json.JSONDecodeError as exc:
-        raise AIJobExtractionError(
-            f"A IA não retornou JSON válido para a vaga. Resposta bruta: {content.strip()}"
-        ) from exc
+        raise AIJobExtractionError("A IA não retornou JSON válido para a vaga.") from exc
 
     return JobPosting(
         raw_text=baseline.raw_text,
@@ -135,9 +143,7 @@ def _extract_output_text(payload: dict) -> str:
 
 
 def _log_ai_output(content: str) -> None:
-    if content.strip():
-        print("[job-application] Resposta bruta da IA na estruturação da vaga:", flush=True)
-        print(content.strip(), flush=True)
+    return None
 
 
 def _string(value) -> str:

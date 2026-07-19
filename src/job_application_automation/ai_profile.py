@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+from .ai_client import AIClient, AIProviderError
 from .json_utils import parse_strict_json_object
 from .models import (
     CandidateProfile,
@@ -55,6 +56,7 @@ def generate_candidate_profile(
     profile_path: Path = CANDIDATE_PROFILE_PATH,
     request_timeout: float = 180.0,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> CandidateProfile:
     resume_text = read_resume_text(resume_path)
     grammatical_gender = _existing_grammatical_gender(profile_path)
@@ -69,21 +71,30 @@ def generate_candidate_profile(
         response_schema: dict | None = None,
     ) -> dict:
         try:
-            response_payload = chat_completion(
-                messages,
-                base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
-                model=resolved_model,
-                response_format=response_schema or _schema_for(fields),
-                context_length=PROFILE_OLLAMA_CONTEXT_LENGTH,
-                request_timeout=request_timeout,
-                **kwargs,
-            )
-        except OllamaError as exc:
+            if ai_client is not None:
+                response_payload = ai_client.call_json(
+                    messages,
+                    response_format=response_schema or _schema_for(fields),
+                    model_role="default",
+                    context_length=PROFILE_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                )
+            else:
+                response_payload = chat_completion(
+                    messages,
+                    base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
+                    model=resolved_model,
+                    response_format=response_schema or _schema_for(fields),
+                    context_length=PROFILE_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                    **kwargs,
+                )
+        except (OllamaError, AIProviderError) as exc:
             raise CandidateProfileGenerationError(str(exc)) from exc
 
         output_text = _extract_output_text(response_payload)
         _log_ai_output(output_text, stage)
-        return _data_from_output(output_text, stage)
+        return _data_from_output(output_text, stage, fields)
 
     profile_data: dict = {}
     profile_data.update(extract_part("dados centrais", _build_core_messages(resume_text), CORE_PROFILE_FIELDS))
@@ -646,22 +657,110 @@ def _extract_output_text(payload: dict) -> str:
     raise CandidateProfileGenerationError("O Ollama não retornou texto para o perfil do candidato.")
 
 
-def _data_from_output(output_text: str, stage: str) -> dict:
+def _data_from_output(output_text: str, stage: str, fields: tuple[str, ...]) -> dict:
     try:
-        return parse_strict_json_object(output_text)
+        data = parse_strict_json_object(output_text)
     except json.JSONDecodeError as exc:
         raise CandidateProfileGenerationError(
-            f"A IA não retornou JSON válido na {stage} do perfil do candidato. "
-            f"Resposta bruta: {output_text.strip()}"
+            f"A IA não retornou JSON válido na {stage} do perfil do candidato."
         ) from exc
+    return _normalize_profile_stage_data(data, fields)
+
+
+def _normalize_profile_stage_data(data: dict, fields: tuple[str, ...]) -> dict:
+    normalized = dict(data)
+    if "email" in fields:
+        _normalize_core_profile_data(normalized)
+    if "education" in fields:
+        normalized["education"] = [
+            _normalize_education_entry(entry)
+            for entry in normalized.get("education") or []
+            if isinstance(entry, dict)
+        ]
+    if "languages" in fields:
+        normalized["languages"] = [
+            _normalize_language_entry(entry)
+            for entry in normalized.get("languages") or []
+            if isinstance(entry, dict)
+        ]
+    if "projects" in fields:
+        normalized["projects"] = [
+            _normalize_project_entry(entry)
+            for entry in normalized.get("projects") or []
+            if isinstance(entry, dict)
+        ]
+    for field in fields:
+        normalized.setdefault(field, [] if field in {"education", "languages", "soft_skills", "projects"} else "")
+    return normalized
+
+
+def _normalize_core_profile_data(data: dict) -> None:
+    contacts = data.get("contacts")
+    if isinstance(contacts, dict):
+        if not _string(data.get("phone")):
+            data["phone"] = _string(contacts.get("phone"))
+        if not _string(data.get("email")):
+            data["email"] = _string(contacts.get("email"))
+        urls = contacts.get("urls")
+        if isinstance(urls, list):
+            for url in _strings(urls):
+                lowered = url.lower()
+                if "linkedin" in lowered and not _string(data.get("linkedin")):
+                    data["linkedin"] = url
+                elif "github" in lowered and not _string(data.get("github")):
+                    data["github"] = url
+                elif not _string(data.get("website")):
+                    data["website"] = url
+    location = data.get("location")
+    if isinstance(location, dict):
+        data["location"] = " - ".join(
+            part for part in (_string(location.get("city")), _string(location.get("state"))) if part
+        )
+
+
+def _normalize_education_entry(entry: dict) -> dict:
+    normalized = dict(entry)
+    if not _string(normalized.get("name")):
+        normalized["name"] = _string(normalized.get("notes"))
+        normalized["notes"] = ""
+    normalized.setdefault("institution", "")
+    normalized.setdefault("status", "")
+    normalized.setdefault("level", "")
+    normalized.setdefault("started_at", "")
+    normalized.setdefault("ended_at", "")
+    normalized.setdefault("notes", "")
+    return normalized
+
+
+def _normalize_language_entry(entry: dict) -> dict:
+    normalized = dict(entry)
+    if "name" not in normalized and "language" in normalized:
+        normalized["name"] = normalized.pop("language")
+    if "proficiency" not in normalized and "level" in normalized:
+        normalized["proficiency"] = normalized.pop("level")
+    normalized.setdefault("name", "")
+    normalized.setdefault("proficiency", "")
+    normalized.setdefault("notes", "")
+    return normalized
+
+
+def _normalize_project_entry(entry: dict) -> dict:
+    normalized = dict(entry)
+    if "name" not in normalized and "title" in normalized:
+        normalized["name"] = normalized.pop("title")
+    if "details" not in normalized and "description" in normalized:
+        description = normalized.pop("description")
+        normalized["details"] = [description] if isinstance(description, str) and description.strip() else []
+    if "references" not in normalized and "links" in normalized:
+        normalized["references"] = normalized.pop("links")
+    normalized.setdefault("name", "")
+    normalized.setdefault("details", [])
+    normalized.setdefault("references", [])
+    return normalized
 
 
 def _log_ai_output(content: str, stage: str) -> None:
-    print(
-        f"[job-application] Resposta bruta da IA no profile do candidato ({stage}):",
-        flush=True,
-    )
-    print(content.strip(), flush=True)
+    return None
 
 
 def _candidate_from_json(data: dict) -> CandidateProfile:

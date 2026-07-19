@@ -74,8 +74,8 @@ def test_ai_structures_extracted_text_and_preserves_exact_contact(capsys):
     assert job.contact_email == "inventado@example.com"
     assert job.requirements == ["Python", "APIs REST"]
     output = capsys.readouterr().out
-    assert "[job-application] Resposta bruta da IA na estruturação da vaga" in output
-    assert '"title": "Desenvolvedor Backend"' in output
+    assert "Resposta bruta" not in output
+    assert "Desenvolvedor Backend" not in output
 
 
 def test_ai_job_rejects_garbage_response():

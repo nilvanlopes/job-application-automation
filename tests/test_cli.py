@@ -9,8 +9,10 @@ def test_apply_accepts_optimizer_provider_and_removes_template_flag():
         "apply",
         "--job-text", "Vaga Python",
         "--resume-file", "resume.pdf",
+        "--provider", "gemini",
         "--optimizer-provider", "ollama",
     ])
+    assert args.provider == "gemini"
     assert args.optimizer_provider == "ollama"
     assert str(args.resume_file) == "resume.pdf"
 

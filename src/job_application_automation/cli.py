@@ -86,6 +86,14 @@ def _add_apply_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--optimizer-output-name", default="")
     parser.add_argument(
+        "--provider",
+        default="",
+        help=(
+            "Sobrescreve o provider de IA do job app nesta execução. "
+            "Quando informado, não usa fallback."
+        ),
+    )
+    parser.add_argument(
         "--optimizer-provider",
         default="",
         help="Sobrescreve o provider configurado no .env do curriculum-optimizer nesta execução.",
@@ -119,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_dir=args.output_dir,
                 send=args.send,
                 sender_email=args.sender_email,
+                provider=args.provider,
                 optimizer_output_name=args.optimizer_output_name,
                 optimizer_provider=args.optimizer_provider,
             )

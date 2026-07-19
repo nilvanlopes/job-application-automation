@@ -162,16 +162,8 @@ def test_generate_candidate_profile_writes_candidate_json(tmp_path, capsys):
     )
 
     output = capsys.readouterr().out
-    assert "[job-application] Resposta bruta da IA no profile do candidato" in output
-    assert "(dados centrais)" in output
-    assert "(formação e idiomas)" in output
-    assert "(experiências)" in output
-    assert "(projetos)" in output
-    assert "(competências do resumo)" in output
-    assert "(competências declaradas)" in output
-    assert "(competências das experiências)" in output
-    assert "(nomes técnicos das experiências)" in output
-    assert "(competências dos projetos)" in output
+    assert "Resposta bruta" not in output
+    assert "Resumo profissional." not in output
     assert len(calls) == 9
     assert profile.name == "Nilvan Lopes"
     assert profile.grammatical_gender == "masculino"
@@ -236,6 +228,78 @@ def test_generate_candidate_profile_uses_default_ollama_model(tmp_path):
     )
 
     assert profile.title == "Dev"
+
+
+def test_generate_candidate_profile_normalizes_common_model_shape_variants(tmp_path):
+    resume = tmp_path / "Curriculo.md"
+    resume.write_text("# Nilvan Lopes\n\nProjeto Exemplo (`example.com`).", encoding="utf-8")
+
+    complete_data = {
+        "name": "Nilvan Lopes",
+        "title": "Desenvolvedor Fullstack",
+        "summary": "Resumo profissional.",
+        "contacts": {
+            "phone": "(63) 99223-0471",
+            "email": "nilvanlopes@outlook.com",
+            "urls": ["https://www.linkedin.com/in/nilvanlopes/", "https://github.com/nilvanlopes"],
+        },
+        "location": {"city": "Palmas", "state": "TO"},
+        "education": [
+            {
+                "started_at": "2024",
+                "ended_at": "",
+                "status": "Cursando",
+                "level": "",
+                "notes": "Análise e Desenvolvimento de Sistemas, UNITINS",
+            }
+        ],
+        "languages": [
+            {"language": "Inglês", "level": "Intermediário", "notes": "leitura técnica"},
+        ],
+        "soft_skills": ["Comunicação clara"],
+        "experiences": [],
+        "highlights": [],
+        "projects": [
+            {
+                "title": "Projeto Exemplo",
+                "details": ["Aplicação web responsiva."],
+                "references": ["example.com"],
+            }
+        ],
+        "skills": [],
+    }
+
+    def opener(request, timeout):
+        request_payload = json.loads(request.data.decode("utf-8"))
+        required = request_payload["format"]["required"]
+        response_data = {field: complete_data[field] for field in required if field in complete_data}
+        if "email" in required:
+            response_data.update(
+                {
+                    "name": complete_data["name"],
+                    "title": complete_data["title"],
+                    "summary": complete_data["summary"],
+                    "contacts": complete_data["contacts"],
+                    "location": complete_data["location"],
+                }
+            )
+        return FakeResponse({"choices": [{"message": {"content": json.dumps(response_data)}}]})
+
+    profile = generate_candidate_profile(
+        resume,
+        profile_path=tmp_path / "candidate.json",
+        opener=opener,
+    )
+
+    assert profile.email == "nilvanlopes@outlook.com"
+    assert profile.phone == "(63) 99223-0471"
+    assert profile.linkedin == "https://www.linkedin.com/in/nilvanlopes/"
+    assert profile.github == "https://github.com/nilvanlopes"
+    assert profile.location == "Palmas - TO"
+    assert profile.education[0].name == "Análise e Desenvolvimento de Sistemas, UNITINS"
+    assert profile.languages[0].name == "Inglês"
+    assert profile.languages[0].proficiency == "Intermediário"
+    assert profile.projects[0].name == "Projeto Exemplo"
 
 
 def test_candidate_profile_loads_legacy_json_without_rich_fields(tmp_path):
