@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
+from .ai_client import AIClient, AIProviderError
 from .json_utils import parse_strict_json_object
 from .models import CandidateProfile, JobPosting
 from .ollama import (
@@ -19,13 +20,19 @@ from .ollama import (
 
 
 EMAIL_REVIEW_MIN_SCORE = 9
-EMAIL_REVIEW_MAX_ATTEMPTS = 5
+EMAIL_REVIEW_MAX_ATTEMPTS = 10
+EMAIL_BODY_MIN_WORDS = 90
+EMAIL_BODY_MAX_WORDS = 160
+EMAIL_BODY_TARGET_MIN_WORDS = 105
+EMAIL_BODY_TARGET_MAX_WORDS = 130
 EMAIL_ALIGNMENT_MAX_MATCHES = 24
 EMAIL_ALIGNMENT_MAX_MATCHES_PER_STAGE = 8
 EMAIL_OLLAMA_CONTEXT_LENGTH = DEFAULT_OLLAMA_CONTEXT_LENGTH
-# Keeps the default 14B writer fully GPU-resident on a 10 GiB card.
+# Bounds writer context and keeps local inference within a 10 GiB card.
 EMAIL_WRITER_OLLAMA_CONTEXT_LENGTH = 6144
-EMAIL_WRITER_MAX_OUTPUT_TOKENS = 768
+EMAIL_WRITER_MAX_OUTPUT_TOKENS = 384
+EMAIL_WRITER_TEMPERATURE = 0.1
+EMAIL_WRITER_REQUEST_TIMEOUT = 300.0
 EMAIL_WRITER_FORMAT_ATTEMPTS = 2
 EMAIL_WRITER_REQUIRED_FIELDS = frozenset({"subject", "body"})
 EMAIL_REVIEW_FORMAT_ATTEMPTS = 2
@@ -37,15 +44,15 @@ EMAIL_DISALLOWED_EXPRESSION_PATTERNS = (
     (r"\bansios[oa]s?\b", "ansioso/ansiosa"),
     (r"\bávid[oa]s?\b", "ávido/ávida"),
     (r"\bme\s+preparou\b", "me preparou"),
+    (r"\bdesde\s+o\s+primeiro\s+dia\b", "desde o primeiro dia"),
+)
+EMAIL_DISALLOWED_GENDER_MARKERS = (
+    (r"\([ao]\)", "marcação '(a)' ou '(o)'"),
+    (r"\b\w+/(?:a|o)\b", "alternativa de gênero com barra"),
 )
 EMAIL_REVIEW_CHECKS = (
     ("factual_fidelity", "Fidelidade factual"),
     ("vacancy_alignment", "Aderência à vaga"),
-    ("content_selection", "Seleção de conteúdo"),
-    ("persuasive_quality", "Qualidade persuasiva"),
-    ("cohesion_and_non_repetition", "Coesão e ausência de repetição"),
-    ("identity_and_gender", "Identidade e gênero gramatical"),
-    ("language_and_format", "Linguagem e formato"),
 )
 
 
@@ -54,9 +61,15 @@ class AIEmailGenerationError(RuntimeError):
 
 
 class AIEmailReviewError(AIEmailGenerationError):
-    def __init__(self, message: str, attempts: tuple["AIEmailReviewAttempt", ...]):
+    def __init__(
+        self,
+        message: str,
+        attempts: tuple["AIEmailReviewAttempt", ...],
+        alignment_brief: "AIEmailBrief | None" = None,
+    ):
         super().__init__(message)
         self.attempts = attempts
+        self.alignment_brief = alignment_brief
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +113,7 @@ class AIEmailReviewCheck:
     name: str
     passed: bool
     details: str
+    correction: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +123,7 @@ class AIEmailReview:
     issues: tuple[str, ...]
     feedback: str
     checks: tuple[AIEmailReviewCheck, ...] = ()
+    source: str = "ai"
 
     @property
     def passed(self) -> bool:
@@ -121,6 +136,7 @@ class AIEmailReviewAttempt:
     number: int
     email: AIEmailContent
     review: AIEmailReview
+    revision_directives: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +158,7 @@ def generate_ai_email_brief(
     model: str | None = None,
     request_timeout: float = 120.0,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> AIEmailBrief:
     candidate_data = _candidate_data_for_email(candidate)
     evidence_catalog = _candidate_evidence_catalog(candidate_data)
@@ -149,7 +166,10 @@ def generate_ai_email_brief(
     if not evidence_catalog:
         raise AIEmailGenerationError("O perfil do candidato não contém evidências profissionais para o e-mail.")
     if not vacancy_catalog:
-        raise AIEmailGenerationError("A vaga não contém prioridades que possam orientar o e-mail.")
+        raise AIEmailGenerationError(
+            "Não foi possível identificar atividades, requisitos ou diferenciais "
+            "nos dados estruturados nem no texto original da vaga."
+        )
 
     resolved_model = (model or DEFAULT_OLLAMA_EMAIL_ANALYSIS_MODEL).strip()
     kwargs = {"opener": opener} if opener is not None else {}
@@ -168,27 +188,39 @@ def generate_ai_email_brief(
             len(focus_ids) + 3,
         )
         try:
-            response_payload = chat_completion(
-                _build_brief_messages(
-                    evidence_catalog,
-                    vacancy_catalog,
-                    category=category,
-                    focus_ids=focus_ids,
-                    max_items=max_items,
-                ),
-                base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
-                model=resolved_model,
-                response_format=_brief_schema(
-                    vacancy_ids=focus_ids,
-                    evidence_ids=tuple(item["id"] for item in evidence_catalog),
-                    max_items=max_items,
-                    allow_empty=True,
-                ),
-                context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
-                request_timeout=request_timeout,
-                **kwargs,
+            messages = _build_brief_messages(
+                evidence_catalog,
+                vacancy_catalog,
+                category=category,
+                focus_ids=focus_ids,
+                max_items=max_items,
             )
-        except OllamaError as exc:
+            schema = _brief_schema(
+                vacancy_ids=focus_ids,
+                evidence_ids=tuple(item["id"] for item in evidence_catalog),
+                max_items=max_items,
+                allow_empty=True,
+            )
+            if ai_client is not None:
+                response_payload = ai_client.call_json(
+                    messages,
+                    response_format=schema,
+                    model_role="email_analysis",
+                    task_label=f"Gerando mapa de aderência do e-mail ({category})",
+                    context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                )
+            else:
+                response_payload = chat_completion(
+                    messages,
+                    base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
+                    model=resolved_model,
+                    response_format=schema,
+                    context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                    **kwargs,
+                )
+        except (OllamaError, AIProviderError) as exc:
             raise AIEmailGenerationError(str(exc)) from exc
 
         output_text = _extract_output_text(response_payload)
@@ -198,7 +230,7 @@ def generate_ai_email_brief(
         except json.JSONDecodeError as exc:
             raise AIEmailGenerationError(
                 "A resposta da IA não contém JSON válido para o mapa de aderência "
-                f"na categoria '{category}'. Resposta bruta: {output_text.strip()}"
+                f"na categoria '{category}'."
             ) from exc
         stage_brief = _brief_from_dict(
             generated,
@@ -213,6 +245,7 @@ def generate_ai_email_brief(
                 base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
                 model=resolved_model,
                 request_timeout=request_timeout,
+                ai_client=ai_client,
                 **kwargs,
             ):
                 matches.append(match)
@@ -232,6 +265,7 @@ def _brief_match_is_direct(
     model: str,
     request_timeout: float,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> bool:
     messages = [
         {
@@ -280,16 +314,26 @@ def _brief_match_is_direct(
     ]
     kwargs = {"opener": opener} if opener is not None else {}
     try:
-        response_payload = chat_completion(
-            messages,
-            base_url=base_url,
-            model=model,
-            response_format=_brief_validation_schema(),
-            context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
-            request_timeout=request_timeout,
-            **kwargs,
-        )
-    except OllamaError as exc:
+        if ai_client is not None:
+            response_payload = ai_client.call_json(
+                messages,
+                response_format=_brief_validation_schema(),
+                model_role="email_analysis",
+                task_label="Validando aderência factual do e-mail",
+                context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                request_timeout=request_timeout,
+            )
+        else:
+            response_payload = chat_completion(
+                messages,
+                base_url=base_url,
+                model=model,
+                response_format=_brief_validation_schema(),
+                context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                request_timeout=request_timeout,
+                **kwargs,
+            )
+    except (OllamaError, AIProviderError) as exc:
         raise AIEmailGenerationError(str(exc)) from exc
 
     output_text = _extract_output_text(response_payload)
@@ -298,8 +342,7 @@ def _brief_match_is_direct(
         generated = parse_strict_json_object(output_text)
     except json.JSONDecodeError as exc:
         raise AIEmailGenerationError(
-            "A resposta da IA não contém JSON válido para validar uma aderência. "
-            f"Resposta bruta: {output_text.strip()}"
+            "A resposta da IA não contém JSON válido para validar uma aderência."
         ) from exc
     direct_match = generated.get("direct_match")
     reason = generated.get("reason")
@@ -315,20 +358,24 @@ def generate_ai_email(
     resume_markdown: str = "",
     review_feedback: str = "",
     previous_draft: AIEmailContent | None = None,
+    revision_directives: tuple[str, ...] = (),
+    attempt_number: int = 1,
     alignment_brief: AIEmailBrief | None = None,
     base_url: str | None = None,
     model: str | None = None,
     request_timeout: float = 120.0,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> AIEmailContent:
     candidate_data = _candidate_data_for_email(candidate)
     resolved_model = (model or DEFAULT_OLLAMA_EMAIL_MODEL).strip()
     kwargs = {"opener": opener} if opener is not None else {}
+    corrections = revision_directives or ((review_feedback,) if review_feedback.strip() else ())
     base_messages = _build_messages(
         candidate_data,
         job,
-        review_feedback=review_feedback,
-        previous_draft=previous_draft,
+        revision_directives=corrections,
+        attempt_number=attempt_number,
         alignment_brief=alignment_brief,
     )
     messages = base_messages
@@ -337,17 +384,30 @@ def generate_ai_email(
 
     for _ in range(EMAIL_WRITER_FORMAT_ATTEMPTS):
         try:
-            response_payload = chat_completion(
-                messages,
-                base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
-                model=resolved_model,
-                response_format="json",
-                context_length=EMAIL_WRITER_OLLAMA_CONTEXT_LENGTH,
-                max_output_tokens=EMAIL_WRITER_MAX_OUTPUT_TOKENS,
-                request_timeout=request_timeout,
-                **kwargs,
-            )
-        except OllamaError as exc:
+            if ai_client is not None:
+                response_payload = ai_client.call_json(
+                    messages,
+                    response_format="json",
+                    model_role="email_writer",
+                    task_label="Gerando rascunho do e-mail de candidatura",
+                    context_length=EMAIL_WRITER_OLLAMA_CONTEXT_LENGTH,
+                    max_output_tokens=EMAIL_WRITER_MAX_OUTPUT_TOKENS,
+                    temperature=EMAIL_WRITER_TEMPERATURE,
+                    request_timeout=max(request_timeout, EMAIL_WRITER_REQUEST_TIMEOUT),
+                )
+            else:
+                response_payload = chat_completion(
+                    messages,
+                    base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
+                    model=resolved_model,
+                    response_format="json",
+                    context_length=EMAIL_WRITER_OLLAMA_CONTEXT_LENGTH,
+                    max_output_tokens=EMAIL_WRITER_MAX_OUTPUT_TOKENS,
+                    temperature=EMAIL_WRITER_TEMPERATURE,
+                    request_timeout=max(request_timeout, EMAIL_WRITER_REQUEST_TIMEOUT),
+                    **kwargs,
+                )
+        except (OllamaError, AIProviderError) as exc:
             raise AIEmailGenerationError(str(exc)) from exc
 
         last_output = _extract_output_text(response_payload)
@@ -375,8 +435,7 @@ def generate_ai_email(
 
     raise AIEmailGenerationError(
         "A IA não respeitou o contrato JSON do e-mail após "
-        f"{EMAIL_WRITER_FORMAT_ATTEMPTS} tentativas. Último erro: {last_error}. "
-        f"Resposta bruta: {last_output.strip()}"
+        f"{EMAIL_WRITER_FORMAT_ATTEMPTS} tentativas. Último erro: {last_error}."
     )
 
 
@@ -415,6 +474,7 @@ def review_ai_email(
     model: str | None = None,
     request_timeout: float = 120.0,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> AIEmailReview:
     candidate_data = _candidate_data_for_email(candidate)
     resolved_model = (model or DEFAULT_OLLAMA_MODEL).strip()
@@ -427,16 +487,26 @@ def review_ai_email(
 
     for _ in range(EMAIL_REVIEW_FORMAT_ATTEMPTS):
         try:
-            response_payload = chat_completion(
-                messages,
-                base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
-                model=resolved_model,
-                response_format=_review_schema(),
-                context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
-                request_timeout=request_timeout,
-                **kwargs,
-            )
-        except OllamaError as exc:
+            if ai_client is not None:
+                response_payload = ai_client.call_json(
+                    messages,
+                    response_format=_review_schema(),
+                    model_role="email_analysis",
+                    task_label="Revisando e-mail de candidatura",
+                    context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                )
+            else:
+                response_payload = chat_completion(
+                    messages,
+                    base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
+                    model=resolved_model,
+                    response_format=_review_schema(),
+                    context_length=EMAIL_OLLAMA_CONTEXT_LENGTH,
+                    request_timeout=request_timeout,
+                    **kwargs,
+                )
+        except (OllamaError, AIProviderError) as exc:
             raise AIEmailGenerationError(str(exc)) from exc
 
         last_output = _extract_output_text(response_payload)
@@ -444,7 +514,7 @@ def review_ai_email(
         try:
             generated = parse_strict_json_object(last_output)
             last_generated = generated
-            return _apply_objective_review_checks(_review_from_dict(generated), email)
+            return _apply_objective_review_checks(_review_from_dict(generated), email, job)
         except json.JSONDecodeError:
             last_error = "a resposta não é um objeto JSON válido"
         except AIEmailGenerationError as exc:
@@ -465,14 +535,14 @@ def review_ai_email(
     if last_generated is not None:
         try:
             review = _review_from_dict(last_generated, allow_safe_rejection_defaults=True)
-            return _apply_objective_review_checks(review, email)
+            return _apply_objective_review_checks(review, email, job)
         except AIEmailGenerationError:
             pass
 
     raise AIEmailGenerationError(
         "A IA não respeitou o contrato JSON da revisão após "
         f"{EMAIL_REVIEW_FORMAT_ATTEMPTS} tentativas. Último erro: {last_error}. "
-        f"Resposta bruta: {last_output.strip()}"
+        f"Última resposta: {last_output[:2000]}"
     )
 
 
@@ -489,6 +559,7 @@ def generate_reviewed_ai_email(
     request_timeout: float = 120.0,
     max_attempts: int = EMAIL_REVIEW_MAX_ATTEMPTS,
     opener=None,
+    ai_client: AIClient | None = None,
 ) -> ReviewedAIEmailContent:
     brief = alignment_brief or generate_ai_email_brief(
         candidate,
@@ -497,35 +568,44 @@ def generate_reviewed_ai_email(
         model=model,
         request_timeout=request_timeout,
         opener=opener,
+        ai_client=ai_client,
     )
     attempts: list[AIEmailReviewAttempt] = []
-    feedback = ""
-    previous_draft = None
+    revision_directives: tuple[str, ...] = ()
     for number in range(1, max(1, max_attempts) + 1):
         email = generate_ai_email(
             candidate,
             job,
             resume_markdown=resume_markdown,
-            review_feedback=feedback,
-            previous_draft=previous_draft,
+            revision_directives=revision_directives,
+            attempt_number=number,
             alignment_brief=brief,
             base_url=base_url,
             model=email_model,
             request_timeout=request_timeout,
             opener=opener,
+            ai_client=ai_client,
         )
-        review = review_ai_email(
-            candidate,
-            job,
-            email,
-            resume_markdown=resume_markdown,
-            alignment_brief=brief,
-            base_url=base_url,
-            model=review_model,
-            request_timeout=request_timeout,
-            opener=opener,
+        review = _objective_email_review(email, job)
+        if review is None:
+            review = review_ai_email(
+                candidate,
+                job,
+                email,
+                resume_markdown=resume_markdown,
+                alignment_brief=brief,
+                base_url=base_url,
+                model=review_model,
+                request_timeout=request_timeout,
+                opener=opener,
+                ai_client=ai_client,
+            )
+        attempt = AIEmailReviewAttempt(
+            number=number,
+            email=email,
+            review=review,
+            revision_directives=revision_directives,
         )
-        attempt = AIEmailReviewAttempt(number=number, email=email, review=review)
         attempts.append(attempt)
         if review.passed:
             return ReviewedAIEmailContent(
@@ -533,13 +613,14 @@ def generate_reviewed_ai_email(
                 attempts=tuple(attempts),
                 alignment_brief=brief,
             )
-        feedback = _review_feedback_for_regeneration(review)
-        previous_draft = email
+        revision_directives = _review_feedback_for_regeneration(review)
 
     raise AIEmailReviewError(
         "A IA não gerou um e-mail aprovado pela revisão automática "
-        f"após {len(attempts)} tentativa(s). Último feedback: {feedback}",
+        f"após {len(attempts)} tentativa(s). Últimas correções: "
+        f"{' | '.join(revision_directives)}",
         tuple(attempts),
+        brief,
     )
 
 
@@ -632,11 +713,12 @@ def _build_messages(
     candidate_data: dict,
     job: JobPosting,
     *,
-    review_feedback: str = "",
-    previous_draft: AIEmailContent | None = None,
+    revision_directives: tuple[str, ...] = (),
+    attempt_number: int = 1,
     alignment_brief: AIEmailBrief | None = None,
 ) -> list[dict[str, str]]:
-    system_content = """
+    grammatical_gender = _string(candidate_data.get("grammatical_gender"))
+    system_content = f"""
     Você é um redator sênior de e-mails de candidatura em português do Brasil. Escreva um texto específico, humano e seguro,
     cuja força venha da escolha de evidências concretas. Sua saída possui somente "subject" e "body".
 
@@ -647,27 +729,40 @@ def _build_messages(
       é uma afirmação sobre o histórico do candidato e não exige candidate_evidence.
     - vacancy_priority explica por que a evidência é relevante, mas não prova que o candidato realizou a atividade da vaga.
       Nunca transforme uma tarefa futura, requisito ou tecnologia presente apenas na vaga em experiência passada.
+    - Não combine duas fontes para criar um detalhe novo. "Procuro feedback" não autoriza acrescentar quem forneceu o feedback;
+      mentoria ou desenvolvedores mais experientes presentes apenas na vaga continuam sendo contexto futuro.
+    - Quando as fontes registrarem atuação profissional anterior, não diga "iniciar minha carreira" ou "primeiro emprego".
+      Expresse continuidade, crescimento ou aprofundamento da carreira já iniciada.
     - Preserve o sentido factual de cada evidência. Não acrescente senioridade, domínio, duração, frequência, método, contexto,
       resultado, impacto ou responsabilidade que a fonte não declare.
     - Evidência com source_kind=skill permite afirmar conhecimento naquela habilidade, e nada além disso. Evidências com
       source_kind=experience_activity ou project_activity permitem descrever somente as ações e o escopo registrados.
+      Nunca agrupe uma habilidade isolada em frases como "experiência prática em X, Y e Z", "atuei com X" ou "domino X".
     - Requisitos com barra, vírgula, "ou" ou "e/ou" contêm alternativas independentes. Evidência de PHP autoriza mencionar PHP,
       mas nunca Laravel; evidência de Node.js autoriza Node.js, mas não as outras alternativas da mesma frase.
     - Manifestar interesse, vontade ou intenção presente de aprender e crescer é linguagem legítima de candidatura, não uma
       alegação de experiência passada. Já afirmar facilidade, rapidez ou histórico de aprendizado exige um atributo declarado em
       atributos_profissionais_declarados ou outra evidência explícita.
-    - Escolha os argumentos mais fortes do brief, com diversidade. Dê prioridade ao trabalho central da função e aos requisitos
-      técnicos; inclua um diferencial quando ele trouxer informação convincente. Não faça inventário do currículo.
+    - Escolha de três a cinco argumentos fortes e variados do brief. Dê prioridade ao trabalho central da função e aos requisitos
+      técnicos. Diferenciais são opcionais: só use um quando ele melhorar claramente o argumento. Não faça inventário do currículo.
+    - Não transforme descrição institucional, segmento, tipo de produto ou adjetivo promocional da empresa em motivo principal
+      da candidatura apenas porque aparece na vaga. Só destaque esse contexto quando houver evidência direta do candidato ligada
+      a ele. Sem essa correspondência, fundamente o interesse nas atividades, requisitos e condições de aprendizado explicitamente
+      anunciadas que possuam relação concreta com o perfil.
 
     UMA ÚNICA COMPOSIÇÃO
     - Escreva o conteúdo completo de body de uma vez, como uma única string. Ele deve começar exatamente com "Olá," e conter,
       depois da saudação, três parágrafos curtos separados por uma linha em branco. Não gere os parágrafos em campos separados.
-    - Produza de 110 a 170 palavras. Planeje abertura, prova e convite antes de redigir para que uma ideia conduza à seguinte.
-    - Primeiro parágrafo: manifeste interesse direto pela vaga e pela empresa e conecte a proposta concreta da oportunidade ao
-      momento profissional do candidato. Não antecipe uma lista de tecnologias.
-    - Segundo parágrafo: desenvolva um argumento integrado com quatro a seis aderências fortes e variadas, ligando entregas ou
+    - O intervalo aceito é de {EMAIL_BODY_MIN_WORDS} a {EMAIL_BODY_MAX_WORDS} palavras depois da saudação. Mire entre
+      {EMAIL_BODY_TARGET_MIN_WORDS} e {EMAIL_BODY_TARGET_MAX_WORDS} palavras para não ficar próximo dos limites.
+      Planeje abertura, prova e convite antes de redigir para que uma ideia conduza à seguinte.
+    - Primeiro parágrafo: manifeste interesse direto pela vaga e pela empresa e conecte uma atividade central, requisito ou
+      condição concreta de desenvolvimento profissional ao momento do candidato. Não antecipe uma lista de tecnologias nem use
+      segmento, tipo de produto ou linguagem promocional da empresa como eixo da abertura sem evidência direta correspondente.
+    - Segundo parágrafo: desenvolva um argumento integrado com três a cinco aderências fortes e variadas, ligando entregas ou
       conhecimentos reais ao trabalho anunciado. Agrupe fatos relacionados com naturalidade, sem parecer uma lista.
-    - Terceiro parágrafo: faça, em uma única frase, um convite natural para conversa ou entrevista. Não recapitule habilidades.
+    - Terceiro parágrafo: faça, em uma única frase, um convite natural para conversa ou entrevista. Um convite simples é válido;
+      não tente torná-lo específico repetindo tecnologias, projetos, qualificações ou promessas de contribuição.
     - Cada tecnologia, atividade, evidência e conclusão deve aparecer uma única vez no e-mail. Não resuma o parágrafo anterior
       com frases como "essas atividades me prepararam" e não repita no convite como o candidato contribuirá.
 
@@ -684,24 +779,20 @@ def _build_messages(
     - subject deve conter somente o cargo da vaga em cargo_para_email, com a flexão adequada ao candidato. Não inclua empresa,
       nome, slogan nem o prefixo "Candidatura -", que será aplicado pela aplicação.
 
-    Se houver feedback e rascunho anterior, reescreva o e-mail inteiro como uma nova composição. O feedback é uma recomendação do
-    revisor, não uma nova fonte: ignore qualquer orientação que contradiga vaga, brief, source_context, ano_atual ou atributos
-    declarados. Preserve argumentos factuais úteis e corrija os problemas reais sem criar fatos. Retorne somente JSON válido.
+    Se correcoes_obrigatorias não estiver vazio, produza uma composição totalmente nova a partir das fontes. Não tente reconstruir
+    nem imaginar o rascunho rejeitado. Cada correção é uma restrição, não uma nova fonte: ignore qualquer orientação que contradiga
+    vaga, brief, source_context, ano_atual ou atributos declarados. Retorne somente JSON válido.
     """
     payload = {
         "objetivo": "Escrever o e-mail completo a partir dos melhores alinhamentos reais.",
-        "cargo_para_email": _job_title_without_company(job),
-        "genero_gramatical_candidato": candidate_data.get("grammatical_gender", ""),
+        "tentativa": attempt_number,
+        "cargo_para_email": _job_title_for_email(job, grammatical_gender),
+        "genero_gramatical_candidato": grammatical_gender,
         "ano_atual": date.today().year,
-        "vaga": _job_data_for_email(job),
+        "vaga": _job_data_for_email(job, grammatical_gender=grammatical_gender),
         "brief_de_alinhamento": alignment_brief.to_dict() if alignment_brief else None,
         "atributos_profissionais_declarados": candidate_data.get("soft_skills") or [],
-        "feedback_da_revisao": review_feedback,
-        "rascunho_anterior": (
-            {"subject": previous_draft.subject, "body": previous_draft.body}
-            if previous_draft
-            else None
-        ),
+        "correcoes_obrigatorias": list(revision_directives),
     }
     if alignment_brief is None:
         payload["perfil_profissional"] = candidate_data
@@ -714,7 +805,8 @@ def _build_messages(
             "content": (
                 "Antes de responder, selecione silenciosamente os argumentos, defina a progressão entre os três parágrafos e "
                 "elimine sobreposição entre abertura, prova e convite. Escreva body inteiro em uma única string, aplique o "
-                "gênero informado e retorne somente subject e body."
+                f"gênero informado, mire entre {EMAIL_BODY_TARGET_MIN_WORDS} e {EMAIL_BODY_TARGET_MAX_WORDS} palavras e retorne "
+                "somente subject e body."
             ),
         },
     ]
@@ -726,17 +818,33 @@ def _build_review_messages(
     email: AIEmailContent,
     alignment_brief: AIEmailBrief | None = None,
 ) -> list[dict[str, str]]:
+    grammatical_gender = _string(candidate_data.get("grammatical_gender"))
     system_content = f"""
     Você revisa e-mails de candidatura em português do Brasil. Avalie o texto como uma composição completa e não o reescreva.
     A vaga define relevância; o brief seleciona os argumentos mais relevantes; perfil_profissional_completo é a fonte factual de
     conferência sobre o candidato. Uma paráfrase fiel é válida. Só classifique como invenção uma afirmação profissional sobre o
     candidato que não exista nem no brief nem no perfil completo.
 
+    BLOQUEADORES E NOTA
+    - Reprove somente um problema que impeça o envio: invenção ou exagero factual, baixa aderência material à vaga, argumento
+      irrelevante, clichê concreto, repetição que prejudique a leitura, erro de identidade ou erro real de linguagem.
+    - Sugestões opcionais como citar Docker, TypeScript, inglês, outro projeto ou uma evidência adicional não são bloqueadores.
+      Se o e-mail já possui seleção suficiente, o controle deve passar e a sugestão deve ser omitida.
+    - Score 9 significa pronto para envio com, no máximo, polimento opcional. Score 10 significa pronto e especialmente forte.
+      Score de 0 a 8 exige ao menos um controle reprovado com trecho/problema concreto e correção obrigatória.
+    - Em cada controle, details descreve o problema concreto. correction informa apenas a ação necessária para corrigi-lo.
+      Quando passed=true, correction deve ser vazio. Não escreva recomendações opcionais em correction.
+
     REGRAS DE INTERPRETAÇÃO DAS FONTES
     - O objeto vaga é fonte válida para cargo, empresa, atividades e requisitos. Mencionar a empresa ou manifestar interesse na
       vaga não exige evidência no perfil e nunca é invenção factual.
     - candidate_evidence e source_context são fontes literais. Empresa, projeto, cargo e período presentes nessas fontes ou no
       perfil podem ser usados. Não descarte um fato explícito por achar que ele parece improvável.
+    - Se o perfil registra atuação anterior, "iniciar minha carreira" é incompatível com as fontes. Se o texto atribuir feedback,
+      acompanhamento ou mentoria a uma pessoa ou grupo não identificado na evidência, factual_fidelity deve reprovar.
+    - Para cada uso de "experiência", "experiência prática", "atuei", "utilizei" ou "domino", confira individualmente todas as
+      tecnologias ligadas à expressão. source_kind=skill permite somente "conhecimento em"; se uma habilidade isolada for
+      apresentada como experiência ou domínio, factual_fidelity deve reprovar e mandar limitar a frase a conhecimento.
     - Use ano_atual para datas: uma data de início explícita menor ou igual ao ano atual não é futura. Ser júnior ou iniciante não
       significa não possuir experiência anterior e não invalida "desde 2025" quando isso estiver nas fontes.
     - Requisitos separados por barra, vírgula, "ou" ou "e/ou" são alternativas. PHP no perfil comprova PHP, nunca Laravel. Não
@@ -744,29 +852,27 @@ def _build_review_messages(
     - "Tenho interesse", "quero aprender", "tenho vontade de aprender" e equivalentes expressam intenção presente ou futura;
       não alegam experiência passada e são válidos em uma candidatura. Afirmações de facilidade ou rapidez para aprender são
       atributos e precisam existir no perfil.
+    - Buscar um ambiente colaborativo ou querer crescer nele também é intenção válida. Isso não autoriza afirmar que uma empresa
+      anterior oferecia esse ambiente quando a fonte não o declara.
     - Classifique clichês e exageros subjetivos em persuasive_quality, não como invenção factual. Antes de reprovar fidelidade,
       localize a afirmação exata nas duas fontes do candidato e só então conclua que ela está ausente.
+    - Use o perfil completo somente para conferir afirmações já presentes no e-mail. Nunca proponha em correction uma tecnologia,
+      atividade, empresa ou projeto novo; a correção deve remover, limitar ou reformular o material já selecionado no brief.
 
     Preencha os {len(EMAIL_REVIEW_CHECKS)} controles do schema:
-    - factual_fidelity: toda afirmação profissional está sustentada por candidate_evidence e source_context, sem elevar seu
-      sentido; source_kind=skill comprova apenas conhecimento. Se alguma afirmação não tiver fonte no brief, este controle deve
-      reprovar e o feedback deve mandar removê-la, nunca procurar uma justificativa indireta.
-    - vacancy_alignment: o texto relaciona evidências às prioridades concretas da vaga e não apresenta tarefas futuras como
-      experiência passada.
-    - content_selection: o e-mail aproveita os argumentos mais fortes e variados disponíveis, cobre o trabalho central e
-      requisitos relevantes e usa um diferencial quando houver um forte no brief; não inclui detalhes alheios à vaga. Avalie
-      somente prioridades que tenham correspondência no brief. Omitir uma prioridade sem evidência é correto e nunca deve gerar
-      pedido para o candidato alegar essa experiência.
-    - persuasive_quality: os fatos tornam a candidatura convincente, sem adjetivos vazios, promessas ou frases genéricas que
-      poderiam ser enviadas a qualquer empresa. Reprove variações de "alinhamento perfeito", "perfil ideal", "sólida
-      experiência", "agregar valor", "ansioso", "ávido" e "me preparou"; peça uma formulação concreta baseada nas fontes.
-    - cohesion_and_non_repetition: abertura, prova e convite formam uma progressão natural, e nenhuma evidência, tecnologia,
-      atividade ou conclusão é repetida literal ou semanticamente entre parágrafos.
-    - identity_and_gender: não há nome, placeholder, contato, despedida ou assinatura manual; toda referência ao candidato usa
-      genero_gramatical_candidato e não há formas como "(a)" ou barras.
-    - language_and_format: assunto e português estão corretos; body começa com "Olá,", possui três parágrafos depois da
-      saudação, tem aproximadamente 110 a 170 palavras e termina com um convite de uma frase sem repetir qualificações.
-      Para saudação, quantidade de parágrafos e palavras, use exclusivamente metricas_formato; não estime visualmente.
+    - factual_fidelity: toda afirmação profissional está sustentada pelo brief ou pelo perfil completo, sem elevar seu sentido;
+      source_kind=skill comprova apenas conhecimento. Fato verdadeiro presente somente no perfil não é invenção; avalie em
+      content_selection se ele é irrelevante para a vaga.
+    - vacancy_alignment: o texto relaciona de três a cinco evidências às prioridades concretas da vaga, não apresenta tarefas
+      futuras como experiência passada e não inclui detalhes alheios. Diferenciais são opcionais. Três argumentos relevantes são
+      suficientes; nunca reprove para pedir uma evidência adicional quando a seleção existente já sustenta a candidatura.
+      Reprove quando a abertura escolhe como argumento principal um segmento, tipo de produto ou descrição promocional sem
+      correspondência direta no perfil, apesar de existirem atividades ou requisitos centrais com evidências mais fortes.
+    Formato, gênero gramatical, expressões proibidas, identidade, quantidade de parágrafos e contagem de palavras já foram
+    validados objetivamente antes desta chamada. Não os reavalie, não crie controles adicionais e não faça revisão estilística.
+
+    Um convite convencional como "Gostaria de conversar sobre a oportunidade." é válido no terceiro parágrafo e não deve ser
+    reprovado por ser genérico. Não peça tecnologias, projetos ou qualificações no encerramento.
 
     Não exija que o e-mail mencione todas as correspondências. Exija seleção suficiente para representar a aderência real sem
     virar lista. Não reprove um fato existente apenas porque foi parafraseado. Quando reprovar, cite em issues o trecho concreto
@@ -775,15 +881,16 @@ def _build_review_messages(
     parágrafo, que é reservado ao convite final.
 
     approved só pode ser true quando todos os controles passarem, issues estiver vazio e score for de
-    {EMAIL_REVIEW_MIN_SCORE} a 10. Qualquer controle reprovado exige approved=false, score no máximo 8 e ao menos uma issue.
+    {EMAIL_REVIEW_MIN_SCORE} a 10. Qualquer controle reprovado exige approved=false, score no máximo 8, ao menos uma issue e
+    correction não vazio no controle correspondente. Não reduza a nota por aperfeiçoamentos opcionais.
     Retorne somente o JSON do schema, com textos em português do Brasil.
     """
     payload = {
         "objetivo": "Auditar fidelidade, aderência, persuasão e coesão do e-mail.",
-        "cargo_para_email": _job_title_without_company(job),
-        "genero_gramatical_candidato": candidate_data.get("grammatical_gender", ""),
+        "cargo_para_email": _job_title_for_email(job, grammatical_gender),
+        "genero_gramatical_candidato": grammatical_gender,
         "ano_atual": date.today().year,
-        "vaga": _job_data_for_email(job),
+        "vaga": _job_data_for_email(job, grammatical_gender=grammatical_gender),
         "brief_de_alinhamento": alignment_brief.to_dict() if alignment_brief else None,
         "perfil_profissional_completo": candidate_data,
         "email_gerado": {"subject": email.subject, "body": email.body},
@@ -797,7 +904,8 @@ def _build_review_messages(
             "role": "user",
             "content": (
                 "Leia o corpo em sequência, confronte cada afirmação primeiro com o brief e depois com o perfil completo, e "
-                "compare os parágrafos entre si. Respeite as métricas calculadas. Depois preencha todos os controles, sem expor "
+                "audite separadamente cada tecnologia ligada a experiência, prática, atuação ou domínio. Respeite as métricas "
+                "calculadas. Depois preencha todos os controles, sem expor "
                 "raciocínio e sem sugerir informações ausentes das fontes."
             ),
         },
@@ -852,8 +960,9 @@ def _review_schema() -> dict:
         "properties": {
             "passed": {"type": "boolean"},
             "details": {"type": "string", "maxLength": 300},
+            "correction": {"type": "string", "maxLength": 300},
         },
-        "required": ["passed", "details"],
+        "required": ["passed", "details", "correction"],
         "additionalProperties": False,
     }
     return {
@@ -903,33 +1012,19 @@ def _extract_output_text(payload: dict) -> str:
 
 
 def _log_ai_output(content: str) -> None:
-    if content.strip():
-        print("[job-application] Resposta bruta da IA na geração do e-mail:", flush=True)
-        print(content.strip(), flush=True)
+    return None
 
 
 def _log_brief_output(content: str, category: str) -> None:
-    if content.strip():
-        print(
-            f"[job-application] Resposta bruta da IA no mapa de aderência do e-mail ({category}):",
-            flush=True,
-        )
-        print(content.strip(), flush=True)
+    return None
 
 
 def _log_brief_validation_output(content: str, vacancy_priority: str) -> None:
-    if content.strip():
-        print(
-            f"[job-application] Validação da aderência ({vacancy_priority}):",
-            flush=True,
-        )
-        print(content.strip(), flush=True)
+    return None
 
 
 def _log_review_output(content: str) -> None:
-    if content.strip():
-        print("[job-application] Resposta bruta da IA na revisão do e-mail:", flush=True)
-        print(content.strip(), flush=True)
+    return None
 
 
 def _email_body_metrics(body: str) -> dict[str, int | bool]:
@@ -1040,79 +1135,247 @@ def _unique_brief_matches(matches: list[AIEmailBriefMatch]) -> list[AIEmailBrief
 
 
 def _review_from_dict(data: dict, *, allow_safe_rejection_defaults: bool = False) -> AIEmailReview:
-    checks = _review_checks_from_dict(data.get("checks") or _legacy_review_checks_from_dict(data))
-    approved = data.get("approved")
-    score = data.get("score")
-    issues = _review_issue_strings(data.get("issues"))
     feedback = data.get("feedback")
     if not isinstance(feedback, str):
         feedback = _review_feedback_from_issues(data.get("issues"))
+    checks = _review_checks_from_dict(
+        data.get("checks") or _legacy_review_checks_from_dict(data),
+        fallback_correction=feedback,
+        raw_issues=data.get("issues"),
+    )
+    approved = data.get("approved")
+    score = data.get("score")
+    issues = tuple(
+        f"{check.name}: {check.details}"
+        for check in checks
+        if not check.passed
+    )
+    feedback = "\n".join(
+        check.correction
+        for check in checks
+        if not check.passed and check.correction
+    )
     checks_rejected = any(not check.passed for check in checks)
-    if not isinstance(approved, bool):
-        if allow_safe_rejection_defaults and checks_rejected:
-            approved = False
-        else:
-            raise AIEmailGenerationError("A revisão da IA retornou 'approved' inválido.")
-    if isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 10:
-        if allow_safe_rejection_defaults and not approved:
-            score = 0
-        else:
-            raise AIEmailGenerationError("A revisão da IA retornou 'score' fora do intervalo de 0 a 10.")
-    if not isinstance(feedback, str):
-        raise AIEmailGenerationError("A revisão da IA retornou 'feedback' inválido.")
+    if approved is None:
+        approved = not checks_rejected
+    elif not isinstance(approved, bool):
+        raise AIEmailGenerationError("A revisão da IA retornou 'approved' inválido.")
+    if score is None:
+        failed_count = sum(not check.passed for check in checks)
+        score = EMAIL_REVIEW_MIN_SCORE if not failed_count else max(0, EMAIL_REVIEW_MIN_SCORE - failed_count)
+    elif isinstance(score, bool) or not isinstance(score, int) or not 0 <= score <= 10:
+        raise AIEmailGenerationError("A revisão da IA retornou 'score' fora do intervalo de 0 a 10.")
+    if checks_rejected and score >= EMAIL_REVIEW_MIN_SCORE:
+        raise AIEmailGenerationError("A revisão reprovou controles, mas retornou score 9 ou 10.")
+    if not checks_rejected and score < EMAIL_REVIEW_MIN_SCORE:
+        raise AIEmailGenerationError("A revisão retornou score abaixo de 9 sem indicar controle reprovado.")
+    expected_approval = not checks_rejected and score >= EMAIL_REVIEW_MIN_SCORE and not issues
+    if approved is not expected_approval:
+        raise AIEmailGenerationError("A revisão retornou aprovação incompatível com score, controles ou issues.")
     return AIEmailReview(
         approved=approved,
         score=score,
-        issues=tuple(item.strip() for item in issues if item.strip()),
-        feedback=feedback.strip(),
-        checks=checks,
-    )
-
-
-def _apply_objective_review_checks(review: AIEmailReview, email: AIEmailContent) -> AIEmailReview:
-    found = [
-        label
-        for pattern, label in EMAIL_DISALLOWED_EXPRESSION_PATTERNS
-        if re.search(pattern, email.body, flags=re.IGNORECASE)
-    ]
-    if not found:
-        return review
-
-    expressions = ", ".join(f"'{item}'" for item in found)
-    detail = (
-        f"O corpo usa expressão genérica proibida: {expressions}. "
-        "Substitua-a por uma formulação concreta sustentada pelo brief e pelo perfil."
-    )
-    checks = tuple(
-        AIEmailReviewCheck(name=check.name, passed=False, details=detail)
-        if check.name == "persuasive_quality"
-        else check
-        for check in review.checks
-    )
-    issue = f"persuasive_quality: {detail}"
-    feedback = "\n".join(part for part in (review.feedback, detail) if part).strip()
-    return AIEmailReview(
-        approved=False,
-        score=min(review.score, EMAIL_REVIEW_MIN_SCORE - 1),
-        issues=(*review.issues, issue) if issue not in review.issues else review.issues,
+        issues=issues,
         feedback=feedback,
         checks=checks,
     )
 
 
-def _review_checks_from_dict(value) -> tuple[AIEmailReviewCheck, ...]:
+def _objective_email_review(email: AIEmailContent, job: JobPosting) -> AIEmailReview | None:
+    violations = _objective_email_violations(email, job)
+    if not violations:
+        return None
+    grouped: dict[str, tuple[list[str], list[str]]] = {}
+    for name, details, correction in violations:
+        detail_parts, correction_parts = grouped.setdefault(name, ([], []))
+        detail_parts.append(details)
+        correction_parts.append(correction)
+    checks = tuple(
+        AIEmailReviewCheck(
+            name=name,
+            passed=False,
+            details=" ".join(detail_parts),
+            correction=" ".join(dict.fromkeys(correction_parts)),
+        )
+        for name, (detail_parts, correction_parts) in grouped.items()
+    )
+    return AIEmailReview(
+        approved=False,
+        score=EMAIL_REVIEW_MIN_SCORE - 1,
+        issues=tuple(f"{check.name}: {check.details}" for check in checks),
+        feedback="\n".join(check.correction for check in checks),
+        checks=checks,
+        source="local",
+    )
+
+
+def _objective_email_violations(
+    email: AIEmailContent,
+    job: JobPosting,
+) -> tuple[tuple[str, str, str], ...]:
+    violations: list[tuple[str, str, str]] = []
+    metrics = _email_body_metrics(email.body)
+    if not metrics["starts_with_exact_greeting"]:
+        violations.append(
+            (
+                "language_and_format",
+                "O corpo não começa com a saudação exata 'Olá,'.",
+                "Comece body exatamente com 'Olá,'.",
+            )
+        )
+    paragraph_count = int(metrics["paragraphs_after_greeting"])
+    if paragraph_count != 3:
+        violations.append(
+            (
+                "language_and_format",
+                f"O corpo possui {paragraph_count} parágrafo(s) depois da saudação; são exigidos 3.",
+                "Escreva exatamente três parágrafos depois da saudação: abertura, prova e convite.",
+            )
+        )
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", email.body.strip()) if block.strip()]
+    content_blocks = blocks[1:] if blocks and blocks[0] == "Olá," else blocks
+    if len(content_blocks) == 3:
+        final_sentences = re.findall(r"[^.!?]+[.!?]+(?:[\"')\]]+)?", content_blocks[-1])
+        if len(final_sentences) != 1:
+            violations.append(
+                (
+                    "language_and_format",
+                    f"O convite final possui {len(final_sentences)} frase(s); é exigida exatamente uma.",
+                    "Escreva o terceiro parágrafo como uma única frase de convite para conversa ou entrevista.",
+                )
+            )
+    word_count = int(metrics["word_count_after_greeting"])
+    if not EMAIL_BODY_MIN_WORDS <= word_count <= EMAIL_BODY_MAX_WORDS:
+        violations.append(
+            (
+                "language_and_format",
+                f"O corpo possui {word_count} palavras depois da saudação; o intervalo aceito é "
+                f"{EMAIL_BODY_MIN_WORDS}-{EMAIL_BODY_MAX_WORDS}.",
+                f"Produza uma nova composição com {EMAIL_BODY_TARGET_MIN_WORDS}-{EMAIL_BODY_TARGET_MAX_WORDS} palavras "
+                "depois da saudação.",
+            )
+        )
+
+    found = [
+        label
+        for pattern, label in EMAIL_DISALLOWED_EXPRESSION_PATTERNS
+        if re.search(pattern, email.body, flags=re.IGNORECASE)
+    ]
+    if found:
+        expressions = ", ".join(f"'{item}'" for item in found)
+        violations.append(
+            (
+                "persuasive_quality",
+                f"O corpo usa expressão genérica proibida: {expressions}.",
+                "Substitua as expressões proibidas por formulações concretas sustentadas pelo brief.",
+            )
+        )
+    gender_markers = [
+        label
+        for pattern, label in EMAIL_DISALLOWED_GENDER_MARKERS
+        if re.search(pattern, f"{email.subject}\n{email.body}", flags=re.IGNORECASE)
+    ]
+    if gender_markers:
+        markers = ", ".join(dict.fromkeys(gender_markers))
+        violations.append(
+            (
+                "identity_and_gender",
+                f"O e-mail usa {markers}.",
+                "Use somente a flexão correspondente ao gênero gramatical informado, sem parênteses ou barras.",
+            )
+        )
+    return tuple(violations)
+
+
+def _apply_objective_review_checks(
+    review: AIEmailReview,
+    email: AIEmailContent,
+    job: JobPosting,
+) -> AIEmailReview:
+    objective_review = _objective_email_review(email, job)
+    if objective_review is None:
+        return review
+
+    objective_by_name = {check.name: check for check in objective_review.checks}
+    checks = tuple(objective_by_name.get(check.name, check) for check in review.checks)
+    known_names = {check.name for check in checks}
+    checks = (*checks, *(check for check in objective_review.checks if check.name not in known_names))
+    issues = tuple(dict.fromkeys((*review.issues, *objective_review.issues)))
+    feedback = "\n".join(
+        dict.fromkeys(part for part in (review.feedback, objective_review.feedback) if part)
+    )
+    return AIEmailReview(
+        approved=False,
+        score=min(review.score, EMAIL_REVIEW_MIN_SCORE - 1),
+        issues=issues,
+        feedback=feedback,
+        checks=checks,
+        source="local+ai",
+    )
+
+
+def _review_checks_from_dict(
+    value,
+    *,
+    fallback_correction: str = "",
+    raw_issues=None,
+) -> tuple[AIEmailReviewCheck, ...]:
     if not isinstance(value, dict):
         raise AIEmailGenerationError("A revisão da IA não retornou os controles obrigatórios.")
     checks: list[AIEmailReviewCheck] = []
     for name, _ in EMAIL_REVIEW_CHECKS:
         raw_check = value.get(name)
-        if not isinstance(raw_check, dict):
-            raise AIEmailGenerationError(f"A revisão da IA retornou o controle '{name}' inválido.")
-        passed = raw_check.get("passed")
-        details = raw_check.get("details")
-        if not isinstance(passed, bool) or not isinstance(details, str):
-            raise AIEmailGenerationError(f"A revisão da IA retornou o controle '{name}' inválido.")
-        checks.append(AIEmailReviewCheck(name=name, passed=passed, details=details.strip()))
+        if isinstance(raw_check, bool):
+            passed = raw_check
+            details = _legacy_review_details(raw_issues, name)
+            if not details:
+                details = "Critério atendido." if passed else f"O controle '{name}' foi reprovado."
+            correction = "" if passed else fallback_correction or details
+        elif isinstance(raw_check, dict):
+            passed = raw_check.get("passed")
+            details = _string(
+                raw_check.get("details")
+                or raw_check.get("detail")
+                or raw_check.get("reason")
+                or raw_check.get("explanation")
+            )
+            correction = raw_check.get("correction")
+            if not isinstance(correction, str):
+                correction = _string(
+                    raw_check.get("feedback")
+                    or raw_check.get("correction_guidance")
+                    or raw_check.get("recommendation")
+                )
+        else:
+            raise AIEmailGenerationError(
+                f"A revisão da IA retornou o controle '{name}' inválido: {raw_check!r}; "
+                f"chaves disponíveis: {sorted(value)}."
+            )
+        if not isinstance(passed, bool):
+            raise AIEmailGenerationError(
+                f"A revisão da IA retornou o controle '{name}' inválido: {raw_check!r}."
+            )
+        if not details:
+            details = "Critério atendido." if passed else f"O controle '{name}' foi reprovado."
+        if not isinstance(correction, str) or (not passed and not correction.strip()):
+            correction = "" if passed else fallback_correction or details
+        correction = correction.strip()
+        if passed and correction:
+            raise AIEmailGenerationError(
+                f"A revisão retornou correção para o controle aprovado '{name}'."
+            )
+        if not passed and not correction:
+            raise AIEmailGenerationError(
+                f"A revisão reprovou o controle '{name}' sem informar correção."
+            )
+        checks.append(
+            AIEmailReviewCheck(
+                name=name,
+                passed=passed,
+                details=details.strip(),
+                correction=correction,
+            )
+        )
     return tuple(checks)
 
 
@@ -1120,13 +1383,17 @@ def _legacy_review_checks_from_dict(data: dict) -> dict:
     checks: dict[str, dict[str, object]] = {}
     raw_issues = data.get("issues")
     for name, label in EMAIL_REVIEW_CHECKS:
-        passed = data.get(name)
+        raw_check = data.get(name)
+        if isinstance(raw_check, dict):
+            checks[name] = raw_check
+            continue
+        passed = raw_check
         if not isinstance(passed, bool):
             continue
         details = _legacy_review_details(raw_issues, name)
         if not details:
             details = "Critério atendido." if passed else f"{label} reprovado."
-        checks[name] = {"passed": passed, "details": details}
+        checks[name] = {"passed": passed, "details": details, "correction": ""}
     return checks
 
 
@@ -1187,16 +1454,15 @@ def _review_issue_text(item: dict) -> str:
     return _string(item.get("issue_text") or item.get("description") or item.get("explanation"))
 
 
-def _review_feedback_for_regeneration(review: AIEmailReview) -> str:
-    pieces = list(review.issues)
-    pieces.extend(
-        f"{check.name}: {check.details}"
-        for check in review.checks
-        if not check.passed and check.details
+def _review_feedback_for_regeneration(review: AIEmailReview) -> tuple[str, ...]:
+    corrections = tuple(
+        dict.fromkeys(
+            check.correction.strip()
+            for check in review.checks
+            if not check.passed and check.correction.strip()
+        )
     )
-    if review.feedback:
-        pieces.append(review.feedback)
-    return "\n".join(f"- {piece}" for piece in pieces) or "Reescreva o e-mail com mais aderência e coesão."
+    return corrections or ("Produza uma nova composição corrigindo os controles reprovados.",)
 
 
 def _candidate_data_for_email(candidate: CandidateProfile) -> dict:
@@ -1354,6 +1620,17 @@ def _job_priority_catalog(job: JobPosting) -> list[dict[str, str]]:
         add("diferencial", item)
     if not catalog:
         add("contexto", job.title)
+    if not catalog and job.raw_text.strip():
+        recovered_job = JobPosting.from_text(job.raw_text)
+        for priority in _description_priorities(recovered_job.description):
+            add("atividade", priority)
+        for requirement in recovered_job.requirements:
+            add("requisito", requirement)
+        for item in recovered_job.nice_to_have:
+            add("diferencial", item)
+        add("contexto", recovered_job.title)
+    if not catalog:
+        add("contexto", job.raw_text)
     return catalog
 
 
@@ -1371,9 +1648,9 @@ def _description_priorities(description: str) -> list[str]:
     return list(dict.fromkeys(priorities)) or [description.strip()]
 
 
-def _job_data_for_email(job: JobPosting) -> dict:
+def _job_data_for_email(job: JobPosting, *, grammatical_gender: str = "") -> dict:
     return {
-        "title": job.title,
+        "title": _job_title_for_email(job, grammatical_gender),
         "company": job.company,
         "location": job.location,
         "work_model": job.work_model,
@@ -1395,3 +1672,15 @@ def _job_title_without_company(job: JobPosting) -> str:
     title = company_suffix.sub("", title).strip()
     title = re.sub(r"\s+[-–—/]\s*$", "", title).strip()
     return title or job.title
+
+
+def _job_title_for_email(job: JobPosting, grammatical_gender: str) -> str:
+    title = _job_title_without_company(job)
+    gender = grammatical_gender.strip().casefold()
+    if gender == "masculino":
+        return re.sub(r"\([ao]\)", "", title).strip()
+    if gender == "feminino":
+        title = re.sub(r"or\(a\)", "ora", title, flags=re.IGNORECASE)
+        title = re.sub(r"o\(a\)", "a", title, flags=re.IGNORECASE)
+        return re.sub(r"\(a\)", "a", title, flags=re.IGNORECASE).strip()
+    return title

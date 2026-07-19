@@ -15,6 +15,7 @@ from job_application_automation.ai_email import (
     generate_ai_email_brief,
     generate_reviewed_ai_email,
     review_ai_email,
+    _job_priority_catalog,
 )
 from job_application_automation.models import (
     CandidateProfile,
@@ -34,11 +35,6 @@ from job_application_automation.ollama import (
 CHECK_NAMES = (
     "factual_fidelity",
     "vacancy_alignment",
-    "content_selection",
-    "persuasive_quality",
-    "cohesion_and_non_repetition",
-    "identity_and_gender",
-    "language_and_format",
 )
 
 
@@ -141,6 +137,26 @@ def _job() -> JobPosting:
     )
 
 
+def test_job_priority_catalog_recovers_priorities_from_raw_vacancy_text():
+    job = JobPosting(
+        raw_text=(
+            "Desenvolvedor Fullstack Junior\n"
+            "REQUISITOS\n"
+            "- Conhecimento em React\n"
+            "- Noções de SQL\n"
+            "DIFERENCIAIS\n"
+            "- Conhecimento em Docker\n"
+        ),
+        title="",
+    )
+
+    catalog = _job_priority_catalog(job)
+
+    assert catalog
+    assert any("React" in item["text"] for item in catalog)
+    assert any("Docker" in item["text"] for item in catalog)
+
+
 def _brief() -> AIEmailBrief:
     return AIEmailBrief(
         matches=(
@@ -186,9 +202,23 @@ def _checks(*failed: str) -> dict:
         name: {
             "passed": name not in failed,
             "details": "Falha específica." if name in failed else "Critério atendido.",
+            "correction": f"Corrija {name}." if name in failed else "",
         }
         for name in CHECK_NAMES
     }
+
+
+def _valid_body(*, opening: str = "Tenho interesse na oportunidade de Desenvolvedor Fullstack Junior da Elev Tecnologia.") -> str:
+    return (
+        "Olá,\n\n"
+        f"{opening} A proposta de desenvolver melhorias em um produto real combina com o momento em que busco aprofundar "
+        "minha atuação no front-end e no back-end, aprendendo com acompanhamento técnico e contribuindo com entregas concretas.\n\n"
+        "Na Niceplanet, atuo na manutenção e evolução do Sistema SMGEO, realizando correções de bugs e ajustes de "
+        "funcionalidades com React, PHP e Node.js. Também integro APIs REST, gerencio estado com React Context e apoio "
+        "operações em bancos relacionais. Essa experiência reúne atividades centrais da vaga e conhecimento prático em "
+        "SQL, HTTP e Git, sem deixar de lado a disposição para receber feedback e continuar evoluindo.\n\n"
+        "Gostaria de conversar sobre a oportunidade e conhecer melhor os desafios da equipe."
+    )
 
 
 def _catalog_item(items: list[dict], text: str) -> dict:
@@ -352,6 +382,7 @@ def test_generate_ai_email_requests_one_complete_body_and_preserves_it():
     def opener(request, timeout):
         payload = json.loads(request.data.decode("utf-8"))
         captured["payload"] = payload
+        captured["timeout"] = timeout
         return _response({"subject": "Desenvolvedor Fullstack Junior", "body": body})
 
     result = generate_ai_email(
@@ -366,13 +397,15 @@ def test_generate_ai_email_requests_one_complete_body_and_preserves_it():
     user_data = json.loads(payload["messages"][1]["content"])
     assert payload["model"] == DEFAULT_OLLAMA_EMAIL_MODEL
     assert payload["options"]["num_ctx"] == 6144
-    assert payload["options"]["num_predict"] == 768
+    assert payload["options"]["num_predict"] == 384
     assert payload["format"] == "json"
     assert user_data["ano_atual"] == date.today().year
     assert "Rapidez no aprendizado de novas tecnologias e metodologias" in user_data[
         "atributos_profissionais_declarados"
     ]
     assert user_data["genero_gramatical_candidato"] == "masculino"
+    assert user_data["cargo_para_email"] == "Desenvolvedor Fullstack Junior"
+    assert user_data["vaga"]["title"] == "Desenvolvedor Fullstack Junior"
     assert user_data["brief_de_alinhamento"] == _brief().to_dict()
     assert "perfil_profissional" not in user_data
     assert "Escreva o conteúdo completo de body de uma vez" in system_prompt
@@ -381,7 +414,12 @@ def test_generate_ai_email_requests_one_complete_body_and_preserves_it():
     assert "Evidência de PHP autoriza mencionar PHP" in system_prompt
     assert "mas nunca Laravel" in system_prompt
     assert "Manifestar interesse, vontade ou intenção presente de aprender" in system_prompt
-    assert "feedback é uma recomendação do" in system_prompt
+    assert "tipo de produto ou adjetivo promocional" in system_prompt
+    assert "sem evidência direta correspondente" in system_prompt
+    assert "Cada correção é uma restrição" in system_prompt
+    assert payload["options"]["temperature"] == 0.1
+    assert captured["timeout"] == 300.0
+    assert user_data["correcoes_obrigatorias"] == []
     assert result.subject == "Desenvolvedor Fullstack Junior"
     assert result.body == body
 
@@ -468,25 +506,18 @@ def test_generate_reviewed_ai_email_builds_brief_once_and_rewrites_complete_draf
             assert user_data["brief_de_alinhamento"]["matches"]
             if len(writer_calls) == 1:
                 return _response(
-                    {
-                        "subject": "Desenvolvedor(a) Fullstack Junior",
-                        "body": (
-                            "Olá,\n\nEstou interessado(a) na vaga.\n\n"
-                            "Tenho conhecimento relevante. Essa habilidade é relevante.\n\n"
-                            "Gostaria de conversar sobre essa habilidade."
-                        ),
-                    }
-                )
-            assert "interessado(a)" in user_data["rascunho_anterior"]["body"]
-            assert "identity_and_gender" in user_data["feedback_da_revisao"]
+                        {
+                            "subject": "Desenvolvedor Fullstack Junior",
+                            "body": _valid_body(),
+                        }
+                    )
+            assert "rascunho_anterior" not in user_data
+            assert "feedback_da_revisao" not in user_data
+            assert "Corrija vacancy_alignment." in user_data["correcoes_obrigatorias"]
             return _response(
                 {
                     "subject": "Desenvolvedor Fullstack Junior",
-                    "body": (
-                        "Olá,\n\nTenho interesse na vaga de Desenvolvedor Fullstack Junior da Elev Tecnologia.\n\n"
-                        "Atuo com desenvolvimento fullstack e vejo relação direta com o trabalho anunciado.\n\n"
-                        "Gostaria de conversar sobre a oportunidade."
-                    ),
+                    "body": _valid_body(),
                 }
             )
 
@@ -517,11 +548,11 @@ def test_generate_reviewed_ai_email_builds_brief_once_and_rewrites_complete_draf
         if len(review_calls) == 1:
             return _response(
                 {
-                    "checks": _checks("identity_and_gender", "cohesion_and_non_repetition"),
+                    "checks": _checks("vacancy_alignment"),
                     "approved": False,
                     "score": 6,
-                    "issues": ["O texto usa 'interessado(a)' e repete o mesmo argumento."],
-                    "feedback": "Reescreva no masculino e elimine a repetição entre os parágrafos.",
+                    "issues": ["O texto repete o mesmo argumento."],
+                    "feedback": "Elimine a repetição entre os parágrafos.",
                 }
             )
         return _response(
@@ -580,28 +611,91 @@ def test_generate_reviewed_ai_email_fails_after_rejections():
         )
 
 
-def test_review_ai_email_requires_all_structured_checks_to_pass():
+def test_generate_reviewed_ai_email_repairs_objective_format_before_semantic_review():
+    calls = []
+
     def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        calls.append(payload)
+        if payload["format"] == "json":
+            writer_calls = [call for call in calls if call["format"] == "json"]
+            user_data = json.loads(payload["messages"][1]["content"])
+            if len(writer_calls) == 1:
+                assert user_data["correcoes_obrigatorias"] == []
+                return _response(
+                    {
+                        "subject": "Desenvolvedor(a) Fullstack Junior",
+                        "body": "Olá,\n\nTenho interesse.\n\nAtuo com React.\n\nEstou disponível. Gostaria de conversar.",
+                    }
+                )
+            assert "rascunho_anterior" not in user_data
+            assert any("105-130 palavras" in item for item in user_data["correcoes_obrigatorias"])
+            assert any("gênero gramatical" in item for item in user_data["correcoes_obrigatorias"])
+            assert any("única frase" in item for item in user_data["correcoes_obrigatorias"])
+            return _response(
+                {
+                    "subject": "Desenvolvedor Fullstack Junior",
+                    "body": _valid_body(),
+                }
+            )
+        return _response(
+            {
+                "checks": _checks(),
+                "approved": True,
+                "score": 9,
+                "issues": [],
+                "feedback": "",
+            }
+        )
+
+    result = generate_reviewed_ai_email(
+        _candidate_profile(),
+        _job(),
+        alignment_brief=_brief(),
+        opener=opener,
+        max_attempts=2,
+    )
+
+    writer_calls = [call for call in calls if call["format"] == "json"]
+    review_calls = [
+        call
+        for call in calls
+        if isinstance(call["format"], dict) and "checks" in call["format"].get("required", [])
+    ]
+    assert len(writer_calls) == 2
+    assert len(review_calls) == 1
+    assert result.attempts[0].review.source == "local"
+    assert result.attempts[1].revision_directives
+    assert result.final_review.passed is True
+
+
+def test_review_ai_email_requires_all_structured_checks_to_pass():
+    calls = 0
+
+    def opener(request, timeout):
+        nonlocal calls
+        calls += 1
         return _response(
             {
                 "checks": _checks("factual_fidelity"),
-                "approved": True,
-                "score": 10,
-                "issues": [],
-                "feedback": "",
+                "approved": calls == 1,
+                "score": 10 if calls == 1 else 8,
+                "issues": [] if calls == 1 else ["factual_fidelity: Há afirmação sem fonte."],
+                "feedback": "" if calls == 1 else "Remova a afirmação sem fonte.",
             }
         )
 
     review = review_ai_email(
         _candidate_profile(),
         _job(),
-        AIEmailContent(subject="Desenvolvedor Fullstack Junior", body="Olá,\n\nTexto inventado."),
+        AIEmailContent(subject="Desenvolvedor Fullstack Junior", body=_valid_body()),
         alignment_brief=_brief(),
         opener=opener,
     )
 
-    assert review.approved is True
-    assert review.score == 10
+    assert calls == 2
+    assert review.approved is False
+    assert review.score == 8
     assert review.passed is False
     assert review.checks[0].name == "factual_fidelity"
     assert review.checks[0].passed is False
@@ -624,10 +718,7 @@ def test_review_ai_email_objectively_rejects_disallowed_generic_expressions():
         _job(),
         AIEmailContent(
             subject="Desenvolvedor Fullstack Junior",
-            body=(
-                "Olá,\n\nA vaga se alinha perfeitamente ao meu perfil.\n\n"
-                "Tenho experiência com PHP e Node.js.\n\nGostaria de conversar sobre a oportunidade."
-            ),
+            body=_valid_body(opening="A vaga se alinha perfeitamente ao meu perfil profissional."),
         ),
         alignment_brief=_brief(),
         opener=opener,
@@ -639,18 +730,13 @@ def test_review_ai_email_objectively_rejects_disallowed_generic_expressions():
     assert review.passed is False
     assert persuasive_check.passed is False
     assert "alinhamento perfeito" in persuasive_check.details
-    assert review.issues == (f"persuasive_quality: {persuasive_check.details}",)
-    assert "formulação concreta" in review.feedback
+    assert f"persuasive_quality: {persuasive_check.details}" in review.issues
+    assert "formulações concretas" in review.feedback
 
 
 def test_review_ai_email_receives_complete_factual_sources_and_format_metrics():
     captured = {}
-    body = (
-        "Olá,\n\n"
-        "Atuo com desenvolvimento fullstack desde 2025.\n\n"
-        "Tenho experiência com PHP e Node.js.\n\n"
-        "Gostaria de conversar sobre a oportunidade."
-    )
+    body = _valid_body(opening="Atuo com desenvolvimento fullstack desde 2025 e tenho interesse na vaga da Elev Tecnologia.")
 
     def opener(request, timeout):
         captured["payload"] = json.loads(request.data.decode("utf-8"))
@@ -680,6 +766,8 @@ def test_review_ai_email_receives_complete_factual_sources_and_format_metrics():
     assert review.passed is True
     assert request_payload["model"] == DEFAULT_OLLAMA_MODEL
     assert user_data["ano_atual"] == date.today().year
+    assert user_data["cargo_para_email"] == "Desenvolvedor Fullstack Junior"
+    assert user_data["vaga"]["title"] == "Desenvolvedor Fullstack Junior"
     assert profile["summary"] == "Atuo com desenvolvimento fullstack desde 2025."
     assert profile["experiences"][0]["started_at"] == "2025"
     assert "PHP" in profile["skills"]
@@ -689,8 +777,11 @@ def test_review_ai_email_receives_complete_factual_sources_and_format_metrics():
     assert metrics["word_count_after_greeting"] > 10
     assert "uma data de início explícita menor ou igual ao ano atual não é futura" in system_prompt
     assert "PHP no perfil comprova PHP, nunca Laravel" in system_prompt
+    assert "source_kind=skill permite somente" in system_prompt
+    assert "audite separadamente cada tecnologia" in request_payload["messages"][2]["content"]
     assert '"tenho vontade de aprender"' in system_prompt
-    assert "use exclusivamente metricas_formato" in system_prompt
+    assert "validados objetivamente antes desta chamada" in system_prompt
+    assert "tipo de produto ou descrição promocional" in system_prompt
 
 
 def test_review_ai_email_accepts_legacy_flat_checks_from_model():
@@ -698,8 +789,7 @@ def test_review_ai_email_accepts_legacy_flat_checks_from_model():
         return _response(
             {
                 "factual_fidelity": True,
-                "vacancy_alignment": True,
-                "content_selection": False,
+                "vacancy_alignment": False,
                 "persuasive_quality": True,
                 "cohesion_and_non_repetition": False,
                 "identity_and_gender": True,
@@ -708,7 +798,7 @@ def test_review_ai_email_accepts_legacy_flat_checks_from_model():
                 "score": 7,
                 "issues": [
                     {
-                        "control": "content_selection",
+                        "control": "vacancy_alignment",
                         "issue_text": "Inclui uma prática sem evidência.",
                         "feedback": "Remova a prática sem fonte.",
                     },
@@ -726,17 +816,17 @@ def test_review_ai_email_accepts_legacy_flat_checks_from_model():
         _job(),
         AIEmailContent(
             subject="Desenvolvedor Fullstack Junior",
-            body="Olá,\n\nTenho interesse.\n\nTenho experiência.\n\nGostaria de conversar.",
+            body=_valid_body(),
         ),
         alignment_brief=_brief(),
         opener=opener,
     )
 
     assert review.passed is False
-    assert "content_selection: Inclui uma prática sem evidência." in review.issues
+    assert "vacancy_alignment: Inclui uma prática sem evidência." in review.issues
     assert "Remova a prática sem fonte." in review.feedback
-    assert review.checks[2].name == "content_selection"
-    assert review.checks[2].passed is False
+    assert review.checks[1].name == "vacancy_alignment"
+    assert review.checks[1].passed is False
 
 
 def test_review_ai_email_retries_malformed_json():
@@ -762,7 +852,7 @@ def test_review_ai_email_retries_malformed_json():
         _job(),
         AIEmailContent(
             subject="Desenvolvedor Fullstack Junior",
-            body="Olá,\n\nTenho interesse.\n\nTenho experiência.\n\nGostaria de conversar.",
+            body=_valid_body(),
         ),
         alignment_brief=_brief(),
         opener=opener,
@@ -783,15 +873,14 @@ def test_review_ai_email_preserves_aliases_and_defaults_to_safe_rejection():
         return _response(
             {
                 "factual_fidelity": True,
-                "vacancy_alignment": True,
-                "content_selection": False,
+                    "vacancy_alignment": False,
                 "persuasive_quality": True,
                 "cohesion_and_non_repetition": True,
                 "identity_and_gender": True,
                 "language_and_format": True,
                 "issues": [
                     {
-                        "issue_type": "content_selection",
+                            "issue_type": "vacancy_alignment",
                         "description": "O argumento principal foi omitido.",
                         "correction_guidance": "Inclua a evidência mais forte do brief.",
                     }
@@ -804,18 +893,18 @@ def test_review_ai_email_preserves_aliases_and_defaults_to_safe_rejection():
         _job(),
         AIEmailContent(
             subject="Desenvolvedor Fullstack Junior",
-            body="Olá,\n\nTenho interesse.\n\nTenho experiência.\n\nGostaria de conversar.",
+            body=_valid_body(),
         ),
         alignment_brief=_brief(),
         opener=opener,
     )
 
-    assert calls == 2
+    assert calls == 1
     assert review.approved is False
-    assert review.score == 0
+    assert review.score == 8
     assert review.passed is False
-    assert review.issues == ("content_selection: O argumento principal foi omitido.",)
-    assert review.checks[2].details == "O argumento principal foi omitido."
+    assert review.issues == ("vacancy_alignment: O argumento principal foi omitido.",)
+    assert review.checks[1].details == "O argumento principal foi omitido."
     assert review.feedback == "Inclua a evidência mais forte do brief."
 
 
