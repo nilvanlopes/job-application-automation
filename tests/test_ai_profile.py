@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import json
 
-from job_application_automation.ai_profile import generate_candidate_profile
+import pytest
+
+from job_application_automation.ai_profile import (
+    CandidateProfileGenerationError,
+    generate_candidate_profile,
+)
 from job_application_automation.models import CandidateProfile
 from job_application_automation.ollama import DEFAULT_OLLAMA_MODEL
 
@@ -117,6 +122,10 @@ def test_generate_candidate_profile_writes_candidate_json(tmp_path, capsys):
             "location",
         ]:
             assert "identificação, cargo, resumo" in system_prompt
+            assert user_payload["contatos_explicitos_para_copiar"] == {
+                "email": "nilvanlopes@outlook.com"
+            }
+            assert schema["properties"]["email"]["enum"] == ["nilvanlopes@outlook.com"]
             assert "copie o cargo" in final_instruction
         elif required == ["education", "languages", "soft_skills"]:
             assert "Um ano sozinho não prova conclusão" in system_prompt
@@ -300,6 +309,131 @@ def test_generate_candidate_profile_normalizes_common_model_shape_variants(tmp_p
     assert profile.languages[0].name == "Inglês"
     assert profile.languages[0].proficiency == "Intermediário"
     assert profile.projects[0].name == "Projeto Exemplo"
+
+
+def test_generate_candidate_profile_retries_when_ai_omits_explicit_resume_contacts(tmp_path):
+    resume = tmp_path / "Curriculo.md"
+    resume.write_text(
+        "# Nilvan Lopes Cruz\n\n"
+        "- **Telefone:** (63) 99223-0471\n"
+        "- **E-mail:** nilvanlopes@outlook.com\n"
+        "- **LinkedIn:** https://www.linkedin.com/in/nilvanlopes/\n"
+        "- **GitHub:** https://github.com/nilvanlopes\n\n"
+        "## Resumo profissional\nDesenvolvedor Fullstack.\n",
+        encoding="utf-8",
+    )
+
+    complete_data = {
+        "name": "Nilvan Lopes Cruz",
+        "title": "Desenvolvedor Fullstack",
+        "summary": "Desenvolvedor Fullstack.",
+        "email": "",
+        "phone": "",
+        "website": "",
+        "github": "",
+        "linkedin": "",
+        "whatsapp": "",
+        "location": "",
+        "education": [],
+        "languages": [],
+        "soft_skills": [],
+        "experiences": [],
+        "highlights": [],
+        "projects": [],
+        "skills": [],
+    }
+
+    calls = []
+
+    def opener(request, timeout):
+        request_payload = json.loads(request.data.decode("utf-8"))
+        calls.append(request_payload)
+        required = request_payload["format"]["required"]
+        response_data = {field: complete_data[field] for field in required}
+        core_required = [
+            "name",
+            "title",
+            "summary",
+            "email",
+            "phone",
+            "website",
+            "github",
+            "linkedin",
+            "whatsapp",
+            "location",
+        ]
+        if required == core_required:
+            user_payload = json.loads(request_payload["messages"][1]["content"])
+            assert user_payload["contatos_explicitos_para_copiar"] == {
+                "phone": "(63) 99223-0471",
+                "email": "nilvanlopes@outlook.com",
+                "linkedin": "https://www.linkedin.com/in/nilvanlopes/",
+                "github": "https://github.com/nilvanlopes",
+            }
+            assert request_payload["format"]["properties"]["email"]["enum"] == [
+                "nilvanlopes@outlook.com"
+            ]
+            if len([call for call in calls if call["format"]["required"] == core_required]) == 1:
+                return FakeResponse({"choices": [{"message": {"content": json.dumps(response_data)}}]})
+            response_data.update(user_payload["contatos_explicitos_para_copiar"])
+        return FakeResponse({"choices": [{"message": {"content": json.dumps(response_data)}}]})
+
+    profile_path = tmp_path / "candidate.json"
+    profile = generate_candidate_profile(resume, profile_path=profile_path, opener=opener)
+
+    assert profile.email == "nilvanlopes@outlook.com"
+    assert profile.phone == "(63) 99223-0471"
+    assert profile.linkedin == "https://www.linkedin.com/in/nilvanlopes/"
+    assert profile.github == "https://github.com/nilvanlopes"
+    saved = json.loads(profile_path.read_text(encoding="utf-8"))
+    assert saved["email"] == "nilvanlopes@outlook.com"
+    assert saved["phone"] == "(63) 99223-0471"
+    assert len(calls) == 10
+
+
+def test_generate_candidate_profile_fails_when_ai_keeps_omitting_explicit_resume_contacts(tmp_path):
+    resume = tmp_path / "Curriculo.md"
+    resume.write_text(
+        "# Nilvan Lopes Cruz\n\n"
+        "- **Telefone:** (63) 99223-0471\n"
+        "- **E-mail:** nilvanlopes@outlook.com\n",
+        encoding="utf-8",
+    )
+
+    complete_data = {
+        "name": "Nilvan Lopes Cruz",
+        "title": "Desenvolvedor Fullstack",
+        "summary": "",
+        "email": "",
+        "phone": "",
+        "website": "",
+        "github": "",
+        "linkedin": "",
+        "whatsapp": "",
+        "location": "",
+        "education": [],
+        "languages": [],
+        "soft_skills": [],
+        "experiences": [],
+        "highlights": [],
+        "projects": [],
+        "skills": [],
+    }
+
+    def opener(request, timeout):
+        request_payload = json.loads(request.data.decode("utf-8"))
+        response_data = {
+            field: complete_data[field]
+            for field in request_payload["format"]["required"]
+        }
+        return FakeResponse({"choices": [{"message": {"content": json.dumps(response_data)}}]})
+
+    with pytest.raises(CandidateProfileGenerationError, match="contatos incompatíveis"):
+        generate_candidate_profile(
+            resume,
+            profile_path=tmp_path / "candidate.json",
+            opener=opener,
+        )
 
 
 def test_candidate_profile_loads_legacy_json_without_rich_fields(tmp_path):

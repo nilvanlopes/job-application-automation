@@ -3,9 +3,6 @@
   "title": "Desenvolvedor Fullstack",
   "grammatical_gender": "masculino",
   "skills": [
-    "Desenvolvimento FullStack",
-    "Implementação de sistemas",
-    "Manutenção de sistemas",
     "React",
     "PHP",
     "Python",
@@ -42,42 +39,51 @@
     "Engenharia de Software",
     "Documentação do Produto",
     "Componentes Modulares",
+    "Integração de APIs",
     "Gerenciamento de Estado da Aplicação",
-    "React Context",
-    "CI/CD",
-    "Versionamento",
+    "Boas Práticas de Versionamento",
+    "Fluxos de CI/CD",
     "Deploy nas Lojas App Store e Play Store",
     "Manutenção de Sistema",
-    "Evolução de Sistema",
+    "Evolução do Sistema",
     "Atualizações",
     "Correções de Bugs",
     "Ajustes de Funcionalidades",
+    "Garantia de Qualidade de Código",
+    "Estabilidade do Sistema",
+    "Entregas Consistentes",
+    "CI/CD",
     "App Store",
     "Play Store",
-    "Landing page",
+    "React Context",
+    "Redesign público",
     "Display",
     "Animação",
     "Componentes reutilizáveis",
+    "Landing page",
     "SASS",
     "localStorage",
-    "Download de arquivo JSON local",
-    "Upload de arquivo JSON local",
+    "Download",
+    "Upload",
+    "Arquivo JSON local",
     "Dark mode",
-    "APIs"
+    "APIs",
+    "Quarkus JPA",
+    "Consumo de APIs"
   ],
   "education": [
     {
-      "name": "Análise e Desenvolvimento de Sistemas, Universidade Estadual do Tocantins (UNITINS)",
-      "institution": "",
-      "status": "Cursando",
+      "name": "Análise e Desenvolvimento de Sistemas",
+      "institution": "Universidade Estadual do Tocantins (UNITINS)",
+      "status": "cursando",
       "level": "",
       "started_at": "2024",
       "ended_at": "",
       "notes": ""
     },
     {
-      "name": "FullStack Java e Angular, DIO",
-      "institution": "",
+      "name": "FullStack Java e Angular",
+      "institution": "DIO",
       "status": "",
       "level": "",
       "started_at": "2023",
@@ -85,8 +91,8 @@
       "notes": ""
     },
     {
-      "name": "Machine Learning, DIO",
-      "institution": "",
+      "name": "Machine Learning",
+      "institution": "DIO",
       "status": "",
       "level": "",
       "started_at": "2024",
@@ -94,8 +100,8 @@
       "notes": ""
     },
     {
-      "name": "Sistemas de Informação, UNITINS",
-      "institution": "",
+      "name": "Sistemas de Informação",
+      "institution": "Universidade Estadual do Tocantins (UNITINS)",
       "status": "",
       "level": "",
       "started_at": "2016",
@@ -103,8 +109,8 @@
       "notes": ""
     },
     {
-      "name": "Técnico em Redes de Computadores, Colégio Militar de Palmas",
-      "institution": "",
+      "name": "Técnico em Redes de Computadores",
+      "institution": "Colégio Militar de Palmas",
       "status": "",
       "level": "",
       "started_at": "2015",
@@ -120,10 +126,11 @@
   "linkedin": "https://www.linkedin.com/in/nilvanlopes/",
   "whatsapp": "",
   "highlights": [
-    "Desenvolvimento do aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
-    "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
-    "Participei do deploy do aplicativo nas lojas App Store e Play Store.",
-    "Realizei atualizações, correções de bugs e ajustes de funcionalidades utilizando React, PHP e Node.js."
+    "Desenvolvimento de aplicativo mobile utilizando React Native e NestJS",
+    "Modelagem do sistema com conceitos da engenharia de software",
+    "Integração a gateways de pagamento (Asaas) e ao WhatsApp",
+    "Manutenção e evolução do sistema central da empresa",
+    "Atualizações, correções de bugs e ajustes de funcionalidades"
   ],
   "experiences": [
     {
@@ -133,7 +140,7 @@
       "started_at": "2026",
       "ended_at": "",
       "activities": [
-        "Desenvolvimento do aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
+        "Desenvolvimento de aplicativo mobile, utilizando React Native e NestJS, atuando tanto no front-end quanto no back-end.",
         "Participei ativamente da modelagem do sistema, aplicando conceitos da engenharia de software para promover uma entrega profissional do produto e sua documentação.",
         "Desenvolvi e refatorei componentes modulares em React, integrei APIs REST, gerenciei estado da aplicação e apoiei operações de dados em bancos relacionais.",
         "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
@@ -162,10 +169,9 @@
     {
       "name": "Neon Reinvented - Banco Neon",
       "details": [
-        "Desenvolvi uma landing page",
-        "Utilizei um redesign público do Figma do banco Neon",
-        "Foco em display, animação e responsividade",
-        "Reutilização de componentes"
+        "Desenvolvi uma landing page utilizando um redesign público",
+        "com foco em display, animação, responsividade e reutilização",
+        "de componentes"
       ],
       "references": [
         "projetocodeboost2.netlify.app"
@@ -176,7 +182,7 @@
       "name": "Landing Page Hostinger",
       "details": [
         "Desenvolvi uma landing page para a Hostinger",
-        "Foco em responsividade e uso da tecnologia SASS"
+        "com foco em responsividade e uso da tecnologia SASS"
       ],
       "references": [
         "projetocodeboost1.netlify.app"
@@ -187,9 +193,9 @@
       "name": "Site de Ficha de RPG - Vampiro a Máscara",
       "details": [
         "Criei um site por hobby para usar com os amigos",
-        "Utilizei JS para salvar dados no localStorage",
-        "Implementei download e upload de arquivo JSON local",
-        "A página é responsiva e possui dark mode"
+        "utilizando JS para salvar os dados da página no localStorage",
+        "além de download e upload do arquivo JSON local",
+        "a página é responsiva e possui dark mode"
       ],
       "references": [
         "fichavampiro.netlify.app"
@@ -199,25 +205,23 @@
     {
       "name": "APIs",
       "details": [
-        "Projetos de criação de APIs",
-        "Projetos de consumo de APIs"
+        "Projetos de criação de APIs: nilvanlopes/quarkus-jpa (GitHub",
+        "Projetos de consumo de APIs: training/santanderBootcamp2023",
+        "at main · nilvanlopes/training"
       ],
-      "references": [
-        "nilvanlopes/quarkus-jpa",
-        "training/santanderBootcamp2023 at main · nilvanlopes/training"
-      ],
+      "references": [],
       "skills": []
     }
   ],
   "languages": [
     {
       "name": "Inglês",
-      "proficiency": "Intermediário",
-      "notes": "leitura e escrita técnica"
+      "proficiency": "intermediário (leitura e escrita técnica)",
+      "notes": ""
     },
     {
       "name": "Português",
-      "proficiency": "Nativo",
+      "proficiency": "nativo",
       "notes": ""
     }
   ],

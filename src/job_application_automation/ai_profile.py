@@ -12,6 +12,7 @@ from .models import (
     ExperienceEntry,
     LanguageEntry,
     ProjectEntry,
+    normalize_experience_entry_data,
 )
 from .ollama import (
     DEFAULT_OLLAMA_BASE_URL,
@@ -54,7 +55,7 @@ def generate_candidate_profile(
     base_url: str | None = None,
     model: str | None = None,
     profile_path: Path = CANDIDATE_PROFILE_PATH,
-    request_timeout: float = 180.0,
+    request_timeout: float = 300.0,
     opener=None,
     ai_client: AIClient | None = None,
 ) -> CandidateProfile:
@@ -64,17 +65,21 @@ def generate_candidate_profile(
     kwargs = {}
     if opener is not None:
         kwargs["opener"] = opener
+
+    expected_core_contacts = _extract_resume_contacts(resume_text)
+
     def extract_part(
         stage: str,
         messages: list[dict[str, str]],
         fields: tuple[str, ...],
         response_schema: dict | None = None,
     ) -> dict:
+        active_schema = response_schema or _schema_for(fields)
         try:
             if ai_client is not None:
                 response_payload = ai_client.call_json(
                     messages,
-                    response_format=response_schema or _schema_for(fields),
+                    response_format=active_schema,
                     model_role="default",
                     context_length=PROFILE_OLLAMA_CONTEXT_LENGTH,
                     request_timeout=request_timeout,
@@ -84,7 +89,7 @@ def generate_candidate_profile(
                     messages,
                     base_url=base_url or DEFAULT_OLLAMA_BASE_URL,
                     model=resolved_model,
-                    response_format=response_schema or _schema_for(fields),
+                    response_format=active_schema,
                     context_length=PROFILE_OLLAMA_CONTEXT_LENGTH,
                     request_timeout=request_timeout,
                     **kwargs,
@@ -96,8 +101,37 @@ def generate_candidate_profile(
         _log_ai_output(output_text, stage)
         return _data_from_output(output_text, stage, fields)
 
+    def extract_core() -> dict:
+        messages = _build_core_messages(resume_text, expected_core_contacts)
+        schema = _core_schema(expected_core_contacts)
+        output_text = ""
+        for attempt in range(1, 3):
+            data = extract_part("dados centrais", messages, CORE_PROFILE_FIELDS, schema)
+            errors = _core_contact_validation_errors(data, expected_core_contacts)
+            if not errors:
+                return data
+            output_text = json.dumps(data, ensure_ascii=False)
+            if attempt == 2:
+                break
+            messages = [
+                *messages,
+                {"role": "assistant", "content": output_text},
+                {
+                    "role": "user",
+                    "content": (
+                        "Corrija somente os campos de contato que vieram vazios ou diferentes. "
+                        "Copie exatamente estes valores explícitos do currículo: "
+                        f"{json.dumps(expected_core_contacts, ensure_ascii=False)}"
+                    ),
+                },
+            ]
+        raise CandidateProfileGenerationError(
+            "A IA retornou contatos incompatíveis com o currículo: " + "; ".join(errors)
+        )
+
     profile_data: dict = {}
-    profile_data.update(extract_part("dados centrais", _build_core_messages(resume_text), CORE_PROFILE_FIELDS))
+    profile_data.update(extract_core())
+    _ground_core_contacts_from_resume(profile_data, resume_text)
     profile_data.update(
         extract_part("formação e idiomas", _build_background_messages(resume_text), BACKGROUND_PROFILE_FIELDS)
     )
@@ -168,12 +202,14 @@ def generate_candidate_profile(
     return candidate
 
 
-def _build_core_messages(resume_text: str) -> list[dict[str, str]]:
+def _build_core_messages(resume_text: str, expected_contacts: dict[str, str]) -> list[dict[str, str]]:
     system_content = """
     Extraia somente identificação, cargo, resumo, contatos e localização do currículo. O currículo é a única fonte.
     Não invente, complete, estime, corrija ou deduza valores. Use string vazia ou lista vazia quando não houver fonte explícita.
 
     - Copie nome, e-mail, telefone e URLs caractere por caractere.
+    - Se o payload informar contatos explícitos, os campos correspondentes devem ser exatamente iguais a eles.
+    - Não deixe e-mail, telefone, GitHub, LinkedIn ou WhatsApp vazios quando estiverem listados nos contatos explícitos.
     - "title" deve copiar o cargo da experiência profissional mais recente. Se houver cargo no currículo, não deixe vazio.
     - Se existir uma seção de resumo profissional, copie seu conteúdo fielmente em "summary" sem acrescentar qualificadores.
     - Em "location", extraia apenas cidade e estado explicitamente presentes, omitindo rua, número e bairro.
@@ -187,6 +223,7 @@ def _build_core_messages(resume_text: str) -> list[dict[str, str]]:
             "content": json.dumps(
                 {
                     "objetivo": "Extrair dados centrais sem inferências.",
+                    "contatos_explicitos_para_copiar": expected_contacts,
                     "curriculo_original": resume_text,
                 },
                 ensure_ascii=False,
@@ -196,7 +233,8 @@ def _build_core_messages(resume_text: str) -> list[dict[str, str]]:
             "role": "user",
             "content": (
                 "Retorne os dados solicitados. Confira nome, contatos e URLs caractere por caractere e copie o cargo "
-                "da experiência mais recente em title."
+                "da experiência mais recente em title. Para cada chave em contatos_explicitos_para_copiar, o valor "
+                "do JSON final deve ser exatamente igual ao valor informado."
             ),
         },
     ]
@@ -625,6 +663,19 @@ def _schema_for(fields: tuple[str, ...]) -> dict:
     return schema
 
 
+def _core_schema(expected_contacts: dict[str, str]) -> dict:
+    schema = _schema_for(CORE_PROFILE_FIELDS)
+    properties = schema["properties"]
+    for field, value in expected_contacts.items():
+        if field in properties and value:
+            properties[field] = {
+                "type": "string",
+                "enum": [value],
+                "description": "Valor explícito no currículo. Copie exatamente, sem normalizar.",
+            }
+    return schema
+
+
 def _project_schema(resume_text: str) -> dict:
     schema = _schema_for(PROJECT_PROFILE_FIELDS)
     references = _unique_strings(re.findall(r"`([^`\n]+)`", resume_text))
@@ -718,6 +769,56 @@ def _normalize_core_profile_data(data: dict) -> None:
         )
 
 
+def _ground_core_contacts_from_resume(data: dict, resume_text: str) -> None:
+    contact_data = _extract_resume_contacts(resume_text)
+    for field, value in contact_data.items():
+        if value and not _string(data.get(field)):
+            data[field] = value
+
+
+def _core_contact_validation_errors(data: dict, expected_contacts: dict[str, str]) -> list[str]:
+    errors: list[str] = []
+    for field, expected in expected_contacts.items():
+        actual = _string(data.get(field))
+        if expected and actual != expected:
+            errors.append(f"{field}: esperado {expected!r}, recebido {actual!r}")
+    return errors
+
+
+def _extract_resume_contacts(resume_text: str) -> dict[str, str]:
+    contacts: dict[str, str] = {}
+    email_match = re.search(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", resume_text)
+    if email_match:
+        contacts["email"] = email_match.group(0)
+
+    phone_match = re.search(
+        r"(?:telefone|celular|phone)[^:\n]*:\s*\**\s*([+()0-9][+()0-9 .-]{7,})",
+        resume_text,
+        flags=re.IGNORECASE,
+    )
+    if phone_match:
+        contacts["phone"] = phone_match.group(1).strip()
+
+    website_match = re.search(
+        r"(?:site|website|portf[oó]lio)\s*:\s*(https?://[^\s)>\]]+)",
+        resume_text,
+        flags=re.IGNORECASE,
+    )
+    if website_match:
+        contacts["website"] = website_match.group(1).rstrip("`.,;")
+
+    for url in re.findall(r"https?://[^\s)>\]]+", resume_text):
+        cleaned_url = url.rstrip("`.,;")
+        lowered = cleaned_url.lower()
+        if "linkedin.com/" in lowered and "linkedin" not in contacts:
+            contacts["linkedin"] = cleaned_url
+        elif "github.com/" in lowered and "github" not in contacts:
+            contacts["github"] = cleaned_url
+        elif "wa.me/" in lowered and "whatsapp" not in contacts:
+            contacts["whatsapp"] = cleaned_url
+    return contacts
+
+
 def _normalize_education_entry(entry: dict) -> dict:
     normalized = dict(entry)
     if not _string(normalized.get("name")):
@@ -782,7 +883,7 @@ def _candidate_from_json(data: dict) -> CandidateProfile:
         whatsapp=_string(data.get("whatsapp")),
         highlights=_strings(data.get("highlights")),
         experiences=[
-            entry if isinstance(entry, ExperienceEntry) else ExperienceEntry(**entry)
+            entry if isinstance(entry, ExperienceEntry) else ExperienceEntry(**normalize_experience_entry_data(entry))
             for entry in (data.get("experiences") or [])
         ],
         projects=[

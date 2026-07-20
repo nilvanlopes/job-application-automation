@@ -133,9 +133,18 @@ def test_cli_apply_command_passes_review_recipient(monkeypatch, tmp_path):
 def test_cli_send_command_uses_existing_artifacts(monkeypatch, tmp_path):
     captured = {}
 
-    def fake_send_existing(output_dir, *, recipient_email="", sender_email=""):
+    def fake_send_existing(
+        output_dir,
+        *,
+        recipient_email="",
+        subject="",
+        body_text="",
+        sender_email="",
+    ):
         captured["output_dir"] = output_dir
         captured["recipient_email"] = recipient_email
+        captured["subject"] = subject
+        captured["body_text"] = body_text
         captured["sender_email"] = sender_email
         return SimpleNamespace(recipient_email=recipient_email, sent_matches=1)
 
@@ -153,3 +162,28 @@ def test_cli_send_command_uses_existing_artifacts(monkeypatch, tmp_path):
 
     assert captured["output_dir"] == tmp_path / "application"
     assert captured["recipient_email"] == "final@example.com"
+
+
+def test_cli_audit_sends_reports_needs_resend(monkeypatch, tmp_path, capsys):
+    def fake_audit(output_root, *, write=True):
+        assert output_root == tmp_path / "output"
+        assert write is True
+        return [
+            SimpleNamespace(
+                needs_resend=True,
+                server_confirmed=False,
+                verification_status="local_only",
+                recipient_email="contato@pacetech.com.br",
+                subject="Candidatura - Desenvolvedor FullStack",
+                output_dir=str(tmp_path / "output" / "pace-tech"),
+            )
+        ]
+
+    monkeypatch.setattr(cli, "audit_send_artifacts", fake_audit)
+
+    assert cli.main(["audit-sends", "--output-root", str(tmp_path / "output")]) == 0
+
+    output = capsys.readouterr().out
+    assert "total=1" in output
+    assert "server_confirmed=0" in output
+    assert "needs_resend=1" in output
