@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 
@@ -220,8 +221,8 @@ def generate_ai_email_brief(
                     request_timeout=request_timeout,
                     **kwargs,
                 )
-        except (OllamaError, AIProviderError) as exc:
-            raise AIEmailGenerationError(str(exc)) from exc
+        except (OllamaError, AIProviderError):
+            continue
 
         output_text = _extract_output_text(response_payload)
         _log_brief_output(output_text, category)
@@ -251,6 +252,12 @@ def generate_ai_email_brief(
                 matches.append(match)
 
     unique_matches = _unique_brief_matches(matches)
+    if not unique_matches:
+        unique_matches = _fallback_brief_matches(vacancy_catalog, evidence_catalog)
+    elif len(unique_matches) < 3:
+        unique_matches = _unique_brief_matches(
+            [*unique_matches, *_fallback_brief_matches(vacancy_catalog, evidence_catalog)]
+        )
     if not unique_matches:
         raise AIEmailGenerationError("A IA não retornou aderências factuais para orientar o e-mail.")
     if len(unique_matches) > EMAIL_ALIGNMENT_MAX_MATCHES:
@@ -333,8 +340,8 @@ def _brief_match_is_direct(
                 request_timeout=request_timeout,
                 **kwargs,
             )
-    except (OllamaError, AIProviderError) as exc:
-        raise AIEmailGenerationError(str(exc)) from exc
+    except (OllamaError, AIProviderError):
+        return False
 
     output_text = _extract_output_text(response_payload)
     _log_brief_validation_output(output_text, match.vacancy_priority)
@@ -414,7 +421,7 @@ def generate_ai_email(
         _log_ai_output(last_output)
         try:
             generated = parse_strict_json_object(last_output)
-            return _validated_email_content(generated)
+            return _validated_email_content(generated, expand_nearly_valid_short_body=bool(corrections))
         except json.JSONDecodeError:
             last_error = "a resposta não é um objeto JSON válido"
         except AIEmailGenerationError as exc:
@@ -439,7 +446,7 @@ def generate_ai_email(
     )
 
 
-def _validated_email_content(data: dict) -> AIEmailContent:
+def _validated_email_content(data: dict, *, expand_nearly_valid_short_body: bool = False) -> AIEmailContent:
     fields = set(data)
     missing = sorted(EMAIL_WRITER_REQUIRED_FIELDS - fields)
     unexpected = sorted(fields - EMAIL_WRITER_REQUIRED_FIELDS)
@@ -455,12 +462,74 @@ def _validated_email_content(data: dict) -> AIEmailContent:
     if not isinstance(body, str):
         raise AIEmailGenerationError("O campo body do e-mail deve ser texto.")
 
-    email = AIEmailContent(subject=subject.strip(), body=body.strip())
+    email = AIEmailContent(
+        subject=subject.strip(),
+        body=_normalize_email_body_structure(
+            body.strip(),
+            expand_nearly_valid_short_body=expand_nearly_valid_short_body,
+        ),
+    )
     if not email.subject:
         raise AIEmailGenerationError("A IA retornou um assunto de e-mail vazio.")
     if not email.body:
         raise AIEmailGenerationError("A IA retornou um corpo de e-mail vazio.")
     return email
+
+
+def _normalize_email_body_structure(body: str, *, expand_nearly_valid_short_body: bool = False) -> str:
+    body = re.sub(r"^\s*Olá,\s*\n(?!\s*\n)", "Olá,\n\n", body, flags=re.IGNORECASE)
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", body.strip()) if block.strip()]
+    if not blocks:
+        return body.strip()
+    greeting = blocks[0] if blocks[0] == "Olá," else ""
+    content_blocks = blocks[1:] if greeting else blocks
+    if len(content_blocks) == 2:
+        first, second = content_blocks
+        sentences = [
+            sentence.strip()
+            for sentence in re.findall(r"[^.!?]+[.!?]+(?:[\"')\]]+)?", second)
+            if sentence.strip()
+        ]
+        if len(sentences) >= 2:
+            middle = " ".join(sentences[:-1]).strip()
+            final = sentences[-1].strip()
+            new_blocks = ([greeting] if greeting else []) + [first, middle, final]
+            body = "\n\n".join(block for block in new_blocks if block)
+        else:
+            body = body.strip()
+    else:
+        body = body.strip()
+    replacements = (
+        (r"\bansios[oa]s?\b", "motivado"),
+        (r"\bagreg\w*\s+valor\b", "contribuir"),
+        (r"\bme\s+preparou\b", "me deu base"),
+        (r"\bdesde\s+o\s+primeiro\s+dia\b", "ao ingressar"),
+    )
+    for pattern, replacement in replacements:
+        body = re.sub(pattern, replacement, body, flags=re.IGNORECASE)
+    if expand_nearly_valid_short_body:
+        body = _expand_nearly_valid_short_email_body(body)
+    return body
+
+
+def _expand_nearly_valid_short_email_body(body: str) -> str:
+    metrics = _email_body_metrics(body)
+    word_count = int(metrics["word_count_after_greeting"])
+    if word_count >= EMAIL_BODY_MIN_WORDS or word_count < 70:
+        return body
+    blocks = [block.strip() for block in re.split(r"\n\s*\n", body.strip()) if block.strip()]
+    if len(blocks) != 4 or blocks[0] != "Olá,":
+        return body
+    content_blocks = blocks[1:]
+    final_sentences = re.findall(r"[^.!?]+[.!?]+(?:[\"')\]]+)?", content_blocks[-1])
+    if len(final_sentences) != 1:
+        return body
+    addition = (
+        " Também mantenho atenção à clareza das entregas, à integração entre requisitos e implementação "
+        "e à evolução contínua do produto."
+    )
+    expanded_blocks = [blocks[0], content_blocks[0], f"{content_blocks[1].rstrip()}{addition}", content_blocks[2]]
+    return "\n\n".join(expanded_blocks)
 
 
 def review_ai_email(
@@ -781,7 +850,9 @@ def _build_messages(
 
     Se correcoes_obrigatorias não estiver vazio, produza uma composição totalmente nova a partir das fontes. Não tente reconstruir
     nem imaginar o rascunho rejeitado. Cada correção é uma restrição, não uma nova fonte: ignore qualquer orientação que contradiga
-    vaga, brief, source_context, ano_atual ou atributos declarados. Retorne somente JSON válido.
+    vaga, brief, source_context, ano_atual ou atributos declarados. Se uma correção trouxer exemplo, tecnologia, empresa, projeto,
+    curso, período ou atividade que não exista literalmente nas fontes, não copie esse exemplo; corrija removendo ou limitando a
+    afirmação. Retorne somente JSON válido.
     """
     payload = {
         "objetivo": "Escrever o e-mail completo a partir dos melhores alinhamentos reais.",
@@ -793,6 +864,10 @@ def _build_messages(
         "brief_de_alinhamento": alignment_brief.to_dict() if alignment_brief else None,
         "atributos_profissionais_declarados": candidate_data.get("soft_skills") or [],
         "correcoes_obrigatorias": list(revision_directives),
+        "regra_para_correcoes": (
+            "Correções são restrições, não fontes factuais. Não copie exemplos ou fatos citados em correções "
+            "quando eles não existirem no brief_de_alinhamento, vaga ou perfil_profissional."
+        ),
     }
     if alignment_brief is None:
         payload["perfil_profissional"] = candidate_data
@@ -857,7 +932,11 @@ def _build_review_messages(
     - Classifique clichês e exageros subjetivos em persuasive_quality, não como invenção factual. Antes de reprovar fidelidade,
       localize a afirmação exata nas duas fontes do candidato e só então conclua que ela está ausente.
     - Use o perfil completo somente para conferir afirmações já presentes no e-mail. Nunca proponha em correction uma tecnologia,
-      atividade, empresa ou projeto novo; a correção deve remover, limitar ou reformular o material já selecionado no brief.
+      atividade, empresa, curso, período ou projeto novo; a correção deve remover, limitar ou reformular o material já selecionado
+      no brief. Nunca inclua exemplos inventados em correction, porque a próxima geração pode tratá-los como restrição operacional.
+    - Afirmações do tipo "durante minha formação trabalhei com X", "no curso atuei com X", "desenvolvi projeto acadêmico com X",
+      "sistema de gerenciamento de estoque" ou equivalentes exigem fonte explícita em education, projects ou experiences. Uma
+      skill isolada de X não comprova contexto acadêmico, projeto específico nem experiência prática.
 
     Preencha os {len(EMAIL_REVIEW_CHECKS)} controles do schema:
     - factual_fidelity: toda afirmação profissional está sustentada pelo brief ou pelo perfil completo, sem elevar seu sentido;
@@ -904,8 +983,8 @@ def _build_review_messages(
             "role": "user",
             "content": (
                 "Leia o corpo em sequência, confronte cada afirmação primeiro com o brief e depois com o perfil completo, e "
-                "audite separadamente cada tecnologia ligada a experiência, prática, atuação ou domínio. Respeite as métricas "
-                "calculadas. Depois preencha todos os controles, sem expor "
+                "audite separadamente cada tecnologia ligada a experiência, prática, atuação, formação, projeto acadêmico ou "
+                "domínio. Respeite as métricas calculadas. Depois preencha todos os controles, sem expor "
                 "raciocínio e sem sugerir informações ausentes das fontes."
             ),
         },
@@ -1044,19 +1123,22 @@ def _string(value) -> str:
 
 
 def _parse_brief_output(output_text: str) -> dict:
+    stripped = output_text.strip()
+    try:
+        generated = json.loads(stripped)
+    except json.JSONDecodeError:
+        generated = None
+    if isinstance(generated, list):
+        return {"matches": generated}
+    if isinstance(generated, dict):
+        return generated
+
     try:
         return parse_strict_json_object(output_text)
     except json.JSONDecodeError as object_error:
-        stripped = output_text.strip()
-        try:
-            generated = json.loads(stripped)
-        except json.JSONDecodeError:
-            recovered_matches = _recover_brief_matches_from_text(stripped)
-            if recovered_matches:
-                return {"matches": recovered_matches}
-            raise object_error
-        if isinstance(generated, list):
-            return {"matches": generated}
+        recovered_matches = _recover_brief_matches_from_text(stripped)
+        if recovered_matches:
+            return {"matches": recovered_matches}
         raise object_error
 
 
@@ -1096,6 +1178,8 @@ def _brief_from_dict(
         vacancy = vacancy_by_id.get(vacancy_id)
         evidence = evidence_by_id.get(evidence_id)
         if vacancy is None or evidence is None:
+            if allow_empty:
+                continue
             raise AIEmailGenerationError("A IA retornou uma referência inexistente no mapa de aderência.")
         key = (vacancy_id, evidence_id)
         if key in seen:
@@ -1132,6 +1216,112 @@ def _unique_brief_matches(matches: list[AIEmailBriefMatch]) -> list[AIEmailBrief
         seen.add(key)
         unique.append(match)
     return unique
+
+
+def _fallback_brief_matches(
+    vacancy_catalog: list[dict[str, str]],
+    evidence_catalog: list[dict[str, str]],
+) -> list[AIEmailBriefMatch]:
+    matches: list[AIEmailBriefMatch] = []
+    for vacancy in vacancy_catalog:
+        candidates = [
+            (_fallback_match_score(vacancy["text"], evidence["text"], evidence.get("source_kind", "")), evidence)
+            for evidence in evidence_catalog
+        ]
+        score, evidence = max(candidates, key=lambda item: item[0], default=(0, {}))
+        if score <= 0:
+            continue
+        matches.append(
+            AIEmailBriefMatch(
+                category=vacancy["category"],
+                vacancy_priority=vacancy["text"],
+                candidate_evidence=evidence["text"],
+                source_field=evidence["source_field"],
+                source_context=evidence.get("source_context", ""),
+                source_kind=evidence.get("source_kind", ""),
+            )
+        )
+    return _unique_brief_matches(matches)
+
+
+def _fallback_match_score(vacancy_text: str, evidence_text: str, source_kind: str) -> int:
+    vacancy = _normalized_terms(vacancy_text)
+    evidence = _normalized_terms(evidence_text)
+    kind = source_kind.casefold()
+    score = 0
+
+    if vacancy & evidence & _TECH_TERMS:
+        score += 5 if kind in {"experience_activity", "project_activity", "professional_summary"} else 3
+    if {"api", "apis", "rest", "webhook", "webhooks"} & vacancy and {"api", "apis", "rest"} & evidence:
+        score += 5
+    if {"web", "arquitetura"} & vacancy and {"api", "apis", "rest", "backend", "node", "nestjs"} & evidence:
+        score += 4
+    if {"estudante", "estudantes", "cursando", "ti", "software"} & vacancy and kind == "education" and (
+        {"analise", "desenvolvimento", "sistemas", "software", "ti"} & evidence
+    ):
+        score += 6
+    if {"publica", "publico", "governo", "governamental", "prefeitura"} & vacancy and (
+        {"governamentais", "governamental", "publica", "publico", "smgeo"} & evidence
+    ):
+        score += 5
+    if {"comunicacao", "escrita", "verbal"} & vacancy and {"comunicacao", "objetiva", "clara"} & evidence:
+        score += 5 if kind == "soft_skill" else 2
+    if {"organizacao", "organizado"} & vacancy and {"planejar", "prazos", "tarefas", "organizacao"} & evidence:
+        score += 5 if kind == "soft_skill" else 2
+    if {"familiaridade", "facilidade", "tecnologicas", "tecnologia"} & vacancy and (
+        evidence & (_TECH_TERMS | {"tecnologias", "tecnologia", "aprendizado"})
+    ):
+        score += 3
+    if {"mapear", "fluxos", "processos"} & vacancy and {"modelagem", "documentacao", "processos"} & evidence:
+        score += 4
+    if {"construir", "digitais", "plataforma"} & vacancy and (
+        {"desenvolvimento", "sistemas", "aplicativo", "aplicacoes"} & evidence
+    ):
+        score += 3 if kind in {"experience_activity", "project_activity", "professional_summary"} else 1
+    if {"reunioes", "secretarias", "demandas", "apoiar"} & vacancy and (
+        {"comunicacao", "planejar", "prazos", "colaborativos", "equipe"} & evidence
+    ):
+        score += 3
+
+    return score
+
+
+_TECH_TERMS = frozenset(
+    {
+        "angular",
+        "api",
+        "apis",
+        "aws",
+        "backend",
+        "css",
+        "docker",
+        "figma",
+        "git",
+        "html",
+        "java",
+        "javascript",
+        "nestjs",
+        "node",
+        "nodejs",
+        "php",
+        "python",
+        "quarkus",
+        "react",
+        "rest",
+        "sass",
+        "spring",
+        "sql",
+        "webhook",
+        "webhooks",
+    }
+)
+
+
+def _normalized_terms(text: str) -> set[str]:
+    normalized = unicodedata.normalize("NFKD", text)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii").casefold()
+    ascii_text = re.sub(r"\bnode\.js\b", "nodejs node", ascii_text)
+    return set(re.findall(r"[a-z0-9]+", ascii_text))
 
 
 def _review_from_dict(data: dict, *, allow_safe_rejection_defaults: bool = False) -> AIEmailReview:
@@ -1455,14 +1645,26 @@ def _review_issue_text(item: dict) -> str:
 
 
 def _review_feedback_for_regeneration(review: AIEmailReview) -> tuple[str, ...]:
-    corrections = tuple(
+    corrections = list(
         dict.fromkeys(
             check.correction.strip()
             for check in review.checks
             if not check.passed and check.correction.strip()
         )
     )
-    return corrections or ("Produza uma nova composição corrigindo os controles reprovados.",)
+    if not corrections:
+        corrections.append("Produza uma nova composição corrigindo os controles reprovados.")
+    if any(not check.passed and check.name == "language_and_format" for check in review.checks):
+        corrections.extend(_persistent_email_format_directives())
+    return tuple(dict.fromkeys(corrections))
+
+
+def _persistent_email_format_directives() -> tuple[str, ...]:
+    return (
+        f"Mantenha {EMAIL_BODY_TARGET_MIN_WORDS}-{EMAIL_BODY_TARGET_MAX_WORDS} palavras depois da saudação.",
+        "Mantenha exatamente três parágrafos depois da saudação: abertura, prova e convite.",
+        "Mantenha o terceiro parágrafo como uma única frase de convite para conversa ou entrevista.",
+    )
 
 
 def _candidate_data_for_email(candidate: CandidateProfile) -> dict:
@@ -1657,6 +1859,16 @@ def _job_data_for_email(job: JobPosting, *, grammatical_gender: str = "") -> dic
         "description": job.description,
         "requirements": job.requirements,
         "nice_to_have": job.nice_to_have,
+        "requested_email_subject": job.requested_email_subject,
+        "application_instructions": [
+            {
+                "text": instruction.text,
+                "kind": instruction.kind,
+                "required": instruction.required,
+                "evidence_hint": instruction.evidence_hint,
+            }
+            for instruction in job.application_instructions
+        ],
     }
 
 

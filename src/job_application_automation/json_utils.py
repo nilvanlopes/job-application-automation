@@ -8,7 +8,18 @@ def parse_strict_json_object(text: str) -> dict:
     if not stripped:
         raise json.JSONDecodeError("Resposta vazia", text, 0)
 
-    parsed = json.loads(stripped)
+    candidate = _extract_json_object_fragment(stripped)
+    parsed = json.loads(candidate)
     if not isinstance(parsed, dict):
-        raise json.JSONDecodeError("Resposta não contém um objeto JSON válido", stripped, 0)
+        raise json.JSONDecodeError("Resposta não contém um objeto JSON válido", candidate, 0)
     return parsed
+
+
+def _extract_json_object_fragment(text: str) -> str:
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise json.JSONDecodeError("Resposta não contém um objeto JSON", text, 0)
+    return text[start : end + 1]

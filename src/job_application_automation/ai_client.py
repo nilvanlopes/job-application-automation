@@ -30,6 +30,10 @@ class AIProviderConfigError(AIProviderError):
     pass
 
 
+class AIProviderResponseError(AIProviderError):
+    pass
+
+
 class AIClient(Protocol):
     def call_json(
         self,
@@ -167,7 +171,8 @@ class FallbackAIClient:
             except AIProviderError as exc:
                 if self._forced_provider:
                     raise
-                self._unavailable.add(name)
+                if not isinstance(exc, AIProviderResponseError):
+                    self._unavailable.add(name)
                 errors.append(f"{name}: {exc}")
                 if self._on_event:
                     self._on_event(f"Provider de IA '{name}' falhou; tentando próximo: {exc}")
@@ -463,11 +468,11 @@ def _ensure_json_content(payload: dict, provider_name: str) -> None:
         if isinstance(choice_message, dict) and isinstance(choice_message.get("content"), str):
             content = choice_message["content"]
     if not content.strip():
-        raise AIProviderError(f"{provider_name} retornou texto vazio.")
+        raise AIProviderResponseError(f"{provider_name} retornou texto vazio.")
     try:
         json.loads(content.strip())
     except json.JSONDecodeError as exc:
-        raise AIProviderError(f"{provider_name} não retornou JSON válido.") from exc
+        raise AIProviderResponseError(f"{provider_name} não retornou JSON válido.") from exc
 
 
 def _ollama_model_for_role(model_role: str) -> str:

@@ -5,6 +5,7 @@ from datetime import date
 
 import pytest
 
+from job_application_automation.ai_client import AIProviderError
 from job_application_automation.ai_email import (
     AIEmailBrief,
     AIEmailBriefMatch,
@@ -15,6 +16,8 @@ from job_application_automation.ai_email import (
     generate_ai_email_brief,
     generate_reviewed_ai_email,
     review_ai_email,
+    _brief_from_dict,
+    _email_body_metrics,
     _job_priority_catalog,
 )
 from job_application_automation.models import (
@@ -137,6 +140,30 @@ def _job() -> JobPosting:
     )
 
 
+def _colab_internship_job() -> JobPosting:
+    return JobPosting(
+        raw_text="Vaga de Estágio: Soluções para Governo",
+        title="Estágio: Soluções para Governo",
+        company="Colab",
+        location="Paraíso do Tocantins - TO",
+        work_model="Híbrido",
+        description=(
+            "Mapear e construir fluxos de serviços públicos digitais dentro da plataforma Colab\n"
+            "Acompanhar e apoiar as demandas diárias da Prefeitura\n"
+            "Participar de reuniões estratégicas com diferentes secretarias municipais."
+        ),
+        requirements=[
+            "Estudantes de Gestão Pública, Ciências Sociais, Engenharia de Software, TI ou áreas correlatas",
+            "Boa comunicação verbal e escrita + organização",
+            "Familiaridade e facilidade com ferramentas tecnológicas",
+        ],
+        nice_to_have=[
+            "Noções básicas de arquitetura web (APIs, webhooks e afins)",
+            "Experiências na área pública (qualquer atividade conta!)",
+        ],
+    )
+
+
 def test_job_priority_catalog_recovers_priorities_from_raw_vacancy_text():
     job = JobPosting(
         raw_text=(
@@ -155,6 +182,89 @@ def test_job_priority_catalog_recovers_priorities_from_raw_vacancy_text():
     assert catalog
     assert any("React" in item["text"] for item in catalog)
     assert any("Docker" in item["text"] for item in catalog)
+
+
+def test_generate_ai_email_brief_uses_factual_fallback_when_ai_returns_empty_matches():
+    captured = []
+    candidate = _candidate_profile()
+    candidate.summary = (
+        "Atuo com desenvolvimento fullstack desde 2025, com experiência na implementação e manutenção "
+        "de sistemas para agronegócio, fitness e governamentais."
+    )
+
+    def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        captured.append(payload)
+        if payload["format"]["required"] == ["direct_match", "reason"]:
+            return _response({"direct_match": False, "reason": "Sem aderência direta."})
+        return _response({"matches": []})
+
+    brief = generate_ai_email_brief(candidate, _colab_internship_job(), opener=opener)
+    evidence_text = " ".join(match.candidate_evidence for match in brief.matches)
+    priority_text = " ".join(match.vacancy_priority for match in brief.matches)
+
+    assert len(brief.matches) >= 3
+    assert "Análise e Desenvolvimento de Sistemas" in evidence_text
+    assert "Comunicação clara e objetiva" in evidence_text
+    assert "APIs REST" in evidence_text
+    assert "governamentais" in evidence_text
+    assert "Engenharia de Software, TI ou áreas correlatas" in priority_text
+    assert "arquitetura web" in priority_text
+    assert all(
+        isinstance(call["format"], dict) and call["format"]["required"] in (["matches"], ["direct_match", "reason"])
+        for call in captured
+    )
+
+
+def test_generate_ai_email_brief_supplements_sparse_ai_matches_with_factual_fallback():
+    candidate = _candidate_profile()
+    candidate.summary = (
+        "Atuo com desenvolvimento fullstack desde 2025, com experiência na implementação e manutenção "
+        "de sistemas para agronegócio, fitness e governamentais."
+    )
+
+    def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        if payload["format"]["required"] == ["direct_match", "reason"]:
+            return _response({"direct_match": True, "reason": "A evidência sustenta a prioridade."})
+        user_data = json.loads(payload["messages"][1]["content"])
+        if user_data["categoria_em_foco"] == "diferencial":
+            vacancy = _catalog_item(user_data["prioridades_da_vaga"], "área pública")
+            evidence = _catalog_item(user_data["evidencias_do_candidato"], "governamentais")
+            return _response({"matches": [{"vacancy_id": vacancy["id"], "evidence_id": evidence["id"]}]})
+        return _response({"matches": []})
+
+    brief = generate_ai_email_brief(candidate, _colab_internship_job(), opener=opener)
+    evidence_text = " ".join(match.candidate_evidence for match in brief.matches)
+
+    assert len(brief.matches) >= 3
+    assert "governamentais" in evidence_text
+    assert "Análise e Desenvolvimento de Sistemas" in evidence_text
+    assert "APIs REST" in evidence_text
+
+
+def test_generate_ai_email_brief_still_fails_when_fallback_has_no_real_evidence():
+    candidate = CandidateProfile(
+        name="Pessoa Candidata",
+        title="Designer",
+        skills=["Photoshop"],
+        summary="Atuação em identidade visual.",
+    )
+    job = JobPosting(
+        raw_text="Vaga",
+        title="Enfermeiro",
+        requirements=["Registro ativo em enfermagem"],
+        description="Realizar triagem clínica.",
+    )
+
+    def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        if payload["format"]["required"] == ["direct_match", "reason"]:
+            return _response({"direct_match": False, "reason": "Sem aderência direta."})
+        return _response({"matches": []})
+
+    with pytest.raises(AIEmailGenerationError, match="aderências factuais"):
+        generate_ai_email_brief(candidate, job, opener=opener)
 
 
 def _brief() -> AIEmailBrief:
@@ -287,11 +397,109 @@ def test_generate_ai_email_brief_compares_complete_job_and_profile_in_focused_st
 
 
 def test_generate_ai_email_brief_rejects_unknown_references():
+    with pytest.raises(AIEmailGenerationError, match="referência inexistente"):
+        _brief_from_dict(
+            {"matches": [{"vacancy_id": "v999", "evidence_id": "e999"}]},
+            vacancy_by_id={"v1": {"category": "requisito", "text": "React"}},
+            evidence_by_id={
+                "e1": {
+                    "text": "React",
+                    "source_field": "skills[0]",
+                    "source_context": "",
+                    "source_kind": "skill",
+                }
+            },
+        )
+
+
+def test_generate_ai_email_brief_falls_back_when_stage_returns_unknown_references():
+    candidate = _candidate_profile()
+    candidate.summary = (
+        "Atuo com desenvolvimento fullstack desde 2025, com experiência na implementação e manutenção "
+        "de sistemas para agronegócio, fitness e governamentais."
+    )
+
     def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        if payload["format"]["required"] == ["direct_match", "reason"]:
+            return _response({"direct_match": False, "reason": "Sem aderência direta."})
         return _response({"matches": [{"vacancy_id": "v999", "evidence_id": "e999"}]})
 
-    with pytest.raises(AIEmailGenerationError, match="referência inexistente"):
-        generate_ai_email_brief(_candidate_profile(), _job(), opener=opener)
+    brief = generate_ai_email_brief(candidate, _colab_internship_job(), opener=opener)
+    evidence_text = " ".join(match.candidate_evidence for match in brief.matches)
+
+    assert len(brief.matches) >= 3
+    assert "Análise e Desenvolvimento de Sistemas" in evidence_text
+    assert "Comunicação clara e objetiva" in evidence_text
+    assert "APIs REST" in evidence_text
+
+
+def test_generate_ai_email_brief_falls_back_when_stage_provider_fails():
+    class FailingAIClient:
+        def call_json(self, messages, **kwargs):
+            raise AIProviderError("ollama não retornou JSON válido.")
+
+    candidate = _candidate_profile()
+    candidate.summary = (
+        "Atuo com desenvolvimento fullstack desde 2025, com experiência na implementação e manutenção "
+        "de sistemas para agronegócio, fitness e governamentais."
+    )
+
+    brief = generate_ai_email_brief(
+        candidate,
+        _colab_internship_job(),
+        ai_client=FailingAIClient(),
+    )
+    evidence_text = " ".join(match.candidate_evidence for match in brief.matches)
+
+    assert len(brief.matches) >= 3
+    assert "Análise e Desenvolvimento de Sistemas" in evidence_text
+    assert "Comunicação clara e objetiva" in evidence_text
+    assert "APIs REST" in evidence_text
+
+
+def test_generate_ai_email_brief_falls_back_when_validation_provider_fails():
+    class ValidationFailingAIClient:
+        def call_json(self, messages, **kwargs):
+            if kwargs.get("response_format", {}).get("required") == ["direct_match", "reason"]:
+                raise AIProviderError("timeout")
+            user_data = json.loads(messages[1]["content"])
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "matches": [
+                                        {
+                                            "vacancy_id": user_data["focus_vacancy_ids"][0],
+                                            "evidence_id": user_data["evidencias_do_candidato"][0]["id"],
+                                        }
+                                    ]
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+
+    candidate = _candidate_profile()
+    candidate.summary = (
+        "Atuo com desenvolvimento fullstack desde 2025, com experiência na implementação e manutenção "
+        "de sistemas para agronegócio, fitness e governamentais."
+    )
+
+    brief = generate_ai_email_brief(
+        candidate,
+        _colab_internship_job(),
+        ai_client=ValidationFailingAIClient(),
+    )
+    evidence_text = " ".join(match.candidate_evidence for match in brief.matches)
+
+    assert len(brief.matches) >= 3
+    assert "Análise e Desenvolvimento de Sistemas" in evidence_text
+    assert "Comunicação clara e objetiva" in evidence_text
+    assert "APIs REST" in evidence_text
 
 
 def test_generate_ai_email_brief_accepts_top_level_match_list_from_model():
@@ -446,6 +654,59 @@ def test_generate_ai_email_without_brief_uses_full_sanitized_profile():
     result = generate_ai_email(_candidate_profile(), _job(), opener=opener)
 
     assert result.body.startswith("Olá,")
+
+
+def test_generate_ai_email_normalizes_greeting_as_separate_block():
+    body = (
+        "Olá,\n"
+        "Tenho interesse na vaga de Desenvolvedor Fullstack Junior da Elev Tecnologia. A proposta combina com meu momento "
+        "profissional e com minha atuação em desenvolvimento web.\n\n"
+        "Na Niceplanet, atuo na manutenção e evolução do Sistema SMGEO, realizando correções de bugs e ajustes com React, PHP "
+        "e Node.js. Também integro APIs REST e apoio operações em bancos relacionais, além de buscar feedback contínuo para "
+        "aperfeiçoar entregas em projetos colaborativos.\n\n"
+        "Gostaria de conversar sobre a oportunidade e conhecer melhor os desafios da equipe."
+    )
+
+    def opener(request, timeout):
+        return _response({"subject": "Desenvolvedor Fullstack Junior", "body": body})
+
+    result = generate_ai_email(
+        _candidate_profile(),
+        _job(),
+        alignment_brief=_brief(),
+        revision_directives=("Produza uma nova composição com 105-130 palavras depois da saudação.",),
+        opener=opener,
+    )
+
+    assert result.body.startswith("Olá,\n\nTenho interesse")
+
+
+def test_generate_ai_email_expands_nearly_valid_short_body():
+    body = (
+        "Olá,\n\n"
+        "Tenho interesse na vaga de Frontend Developer da Klube Capital para atuar no desenvolvimento do portal do cliente, "
+        "dashboard e painéis administrativos.\n\n"
+        "Minha trajetória como programador FullStack desde 2025 inclui a criação de componentes modulares em React com foco "
+        "em responsividade. Já integrei APIs REST complexas e gerenciei estado da aplicação utilizando Context API. Também "
+        "atuei na manutenção do sistema central, atuando tanto no front quanto no back-end para garantir operações eficientes.\n\n"
+        "Gostaria muito de conversar sobre como posso contribuir com o time desde a primeira etapa."
+    )
+
+    def opener(request, timeout):
+        return _response({"subject": "Frontend Developer", "body": body})
+
+    result = generate_ai_email(
+        _candidate_profile(),
+        _job(),
+        alignment_brief=_brief(),
+        revision_directives=("Produza uma nova composição com 105-130 palavras depois da saudação.",),
+        opener=opener,
+    )
+    metrics = _email_body_metrics(result.body)
+
+    assert metrics["paragraphs_after_greeting"] == 3
+    assert metrics["word_count_after_greeting"] >= 90
+    assert "Também mantenho atenção à clareza das entregas" in result.body
 
 
 def test_generate_ai_email_retries_after_invalid_json_contract():
@@ -669,6 +930,70 @@ def test_generate_reviewed_ai_email_repairs_objective_format_before_semantic_rev
     assert result.final_review.passed is True
 
 
+def test_generate_reviewed_ai_email_keeps_format_directives_across_retries():
+    calls = []
+    body_with_valid_size_but_bad_closing = (
+        "Olá,\n\n"
+        "Tenho interesse na vaga de Desenvolvedor Fullstack Junior da Elev Tecnologia para atuar em melhorias, "
+        "novas funcionalidades e integração entre frontend e backend.\n\n"
+        "Minha trajetória como programador FullStack desde 2025 inclui manutenção e evolução de sistemas, correções "
+        "de bugs e ajustes com React, PHP e Node.js. Também integrei APIs REST e apoiei operações em bancos "
+        "relacionais, usando Git no acompanhamento das entregas e aplicando conhecimentos de Docker quando o contexto "
+        "técnico exigiu organização do ambiente.\n\n"
+        "Gostaria de conversar sobre a oportunidade. Posso contribuir com foco e aprendizado contínuo."
+    )
+
+    def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        calls.append(payload)
+        if payload["format"] == "json":
+            writer_calls = [call for call in calls if call["format"] == "json"]
+            user_data = json.loads(payload["messages"][1]["content"])
+            if len(writer_calls) == 1:
+                return _response(
+                    {
+                        "subject": "Desenvolvedor Fullstack Junior",
+                        "body": "Olá,\n\nTenho interesse.\n\nAtuo com React.\n\nGostaria de conversar.",
+                    }
+                )
+            if len(writer_calls) == 2:
+                assert any("105-130 palavras" in item for item in user_data["correcoes_obrigatorias"])
+                return _response(
+                    {
+                        "subject": "Desenvolvedor Fullstack Junior",
+                        "body": body_with_valid_size_but_bad_closing,
+                    }
+                )
+            assert any("105-130 palavras" in item for item in user_data["correcoes_obrigatorias"])
+            assert any("única frase" in item for item in user_data["correcoes_obrigatorias"])
+            return _response(
+                {
+                    "subject": "Desenvolvedor Fullstack Junior",
+                    "body": _valid_body(),
+                }
+            )
+        return _response(
+            {
+                "checks": _checks(),
+                "approved": True,
+                "score": 9,
+                "issues": [],
+                "feedback": "",
+            }
+        )
+
+    result = generate_reviewed_ai_email(
+        _candidate_profile(),
+        _job(),
+        alignment_brief=_brief(),
+        opener=opener,
+        max_attempts=3,
+    )
+
+    assert len([call for call in calls if call["format"] == "json"]) == 3
+    assert result.final_review.passed is True
+
+
 def test_review_ai_email_requires_all_structured_checks_to_pass():
     calls = 0
 
@@ -778,10 +1103,44 @@ def test_review_ai_email_receives_complete_factual_sources_and_format_metrics():
     assert "uma data de início explícita menor ou igual ao ano atual não é futura" in system_prompt
     assert "PHP no perfil comprova PHP, nunca Laravel" in system_prompt
     assert "source_kind=skill permite somente" in system_prompt
+    assert "durante minha formação trabalhei com X" in system_prompt
+    assert "Nunca inclua exemplos inventados em correction" in system_prompt
     assert "audite separadamente cada tecnologia" in request_payload["messages"][2]["content"]
+    assert "formação, projeto acadêmico" in request_payload["messages"][2]["content"]
     assert '"tenho vontade de aprender"' in system_prompt
     assert "validados objetivamente antes desta chamada" in system_prompt
     assert "tipo de produto ou descrição promocional" in system_prompt
+
+
+def test_generate_ai_email_treats_revision_examples_as_restrictions_not_sources():
+    captured = {}
+
+    def opener(request, timeout):
+        payload = json.loads(request.data.decode("utf-8"))
+        captured["payload"] = payload
+        return _response(
+            {
+                "subject": "Desenvolvedor Fullstack Junior",
+                "body": _valid_body(),
+            }
+        )
+
+    generate_ai_email(
+        _candidate_profile(),
+        _job(),
+        alignment_brief=_brief(),
+        revision_directives=(
+            "Relacione a vaga. Por exemplo: durante minha formação trabalhei com PostgreSQL em um sistema de estoque.",
+        ),
+        opener=opener,
+    )
+
+    request_payload = captured["payload"]
+    system_prompt = request_payload["messages"][0]["content"]
+    user_data = json.loads(request_payload["messages"][1]["content"])
+    assert "não copie esse exemplo" in system_prompt
+    assert "Correções são restrições, não fontes factuais" in user_data["regra_para_correcoes"]
+    assert "sistema de estoque" in user_data["correcoes_obrigatorias"][0]
 
 
 def test_review_ai_email_accepts_legacy_flat_checks_from_model():

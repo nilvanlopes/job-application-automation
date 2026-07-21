@@ -151,6 +151,17 @@ def test_fallback_invalid_json_tries_next_provider():
     assert second.calls == 1
 
 
+def test_fallback_invalid_json_does_not_mark_provider_unavailable():
+    first = FakeRawClient("thinking... sem JSON")
+    second = FakeClient([{"ok": True}, {"ok": True}])
+    client = FallbackAIClient([("openrouter", first), ("ollama", second)])
+
+    assert json.loads(client.call_json([], response_format={})["choices"][0]["message"]["content"]) == {"ok": True}
+    assert json.loads(client.call_json([], response_format={})["choices"][0]["message"]["content"]) == {"ok": True}
+    assert first.calls == 2
+    assert second.calls == 2
+
+
 def test_forced_provider_does_not_fallback():
     first = FakeClient([AIProviderError("offline")])
     second = FakeClient([{"ok": True}])
