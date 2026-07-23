@@ -12,6 +12,8 @@ class OutlookComConfig:
     sender_email: str = "nilvanlopes@outlook.com"
     powershell_executable: str = "powershell.exe"
     verify_delay_seconds: int = 5
+    sync_after_send: bool = True
+    sync_wait_seconds: int = 15
 
 
 @dataclass(slots=True)
@@ -22,6 +24,9 @@ class OutlookComSendResult:
     outbox_matches: int
     sent_matches: int
     raw_output: str
+    delivery_verification_source: str = "outlook_com_local"
+    server_confirmed: bool = False
+    verification_status: str = "local_only"
 
 
 class OutlookComSendError(RuntimeError):
@@ -59,6 +64,8 @@ def send_outlook_com_email(
             html_path=_to_windows_path(html_path),
             attachment_paths=[_to_windows_path(path) for path in attachments],
             verify_delay_seconds=config.verify_delay_seconds,
+            sync_after_send=config.sync_after_send,
+            sync_wait_seconds=config.sync_wait_seconds,
         ),
     ]
     completed = runner(command, capture_output=True, text=True, timeout=180)
@@ -71,9 +78,9 @@ def send_outlook_com_email(
 
     outbox_matches = _extract_count(stdout, "OUTBOX_MATCHES")
     sent_matches = _extract_count(stdout, "SENT_MATCHES")
-    status = "sent" if outbox_matches == 0 and sent_matches >= 1 else "unknown"
-    if status != "sent":
-        raise OutlookComSendError(f"Outlook COM send was not verified: {raw}")
+    status = "submitted_local" if outbox_matches == 0 and sent_matches >= 1 else "unknown"
+    if status != "submitted_local":
+        raise OutlookComSendError(f"Outlook COM submission was not verified locally: {raw}")
 
     return OutlookComSendResult(
         recipient_email=recipient_email,
@@ -85,7 +92,17 @@ def send_outlook_com_email(
     )
 
 
-def _build_powershell_script(*, sender_email: str, recipient_email: str, subject: str, html_path: str, attachment_paths: Sequence[str], verify_delay_seconds: int) -> str:
+def _build_powershell_script(
+    *,
+    sender_email: str,
+    recipient_email: str,
+    subject: str,
+    html_path: str,
+    attachment_paths: Sequence[str],
+    verify_delay_seconds: int,
+    sync_after_send: bool,
+    sync_wait_seconds: int,
+) -> str:
     sender = _ps_quote(sender_email)
     recipient = _ps_quote(recipient_email)
     quoted_subject = _ps_quote(subject)
@@ -93,6 +110,22 @@ def _build_powershell_script(*, sender_email: str, recipient_email: str, subject
     attachment_lines = "\n".join(
         f"[void]$mail.Attachments.Add({_ps_quote(path)});" for path in attachment_paths
     )
+    sync_lines = ""
+    if sync_after_send:
+        sync_lines = f"""
+try {{
+  $sync = $session.SyncObjects | Where-Object {{ $_.Name -eq "All Accounts" }} | Select-Object -First 1;
+  if($sync) {{
+    $sync.Start();
+    Write-Host "OUTLOOK_SYNC_STARTED name=$($sync.Name)";
+    Start-Sleep -Seconds {sync_wait_seconds};
+  }} else {{
+    Write-Host "OUTLOOK_SYNC_SKIPPED reason=no_all_accounts_sync_object";
+  }}
+}} catch {{
+  Write-Host "OUTLOOK_SYNC_FAILED error=$($_.Exception.Message)";
+}}
+""".strip()
     return f"""
 $ErrorActionPreference="Stop";
 $outlook = New-Object -ComObject Outlook.Application;
@@ -108,6 +141,7 @@ $mail.HTMLBody = $html;
 {attachment_lines}
 $mail.Send();
 Write-Host "SENT_COM_MAIL to={recipient_email} from=$($account.SmtpAddress) subject={subject}";
+{sync_lines}
 Start-Sleep -Seconds {verify_delay_seconds};
 $outbox = $session.GetDefaultFolder(4);
 $sent = $session.GetDefaultFolder(5);

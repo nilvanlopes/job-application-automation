@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from .delivery_audit import audit_send_artifacts
 from .ocr import extract_text_from_image
 from .workflow import ApplicationRequest, run_application, send_existing_application
 
@@ -48,8 +49,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Destinatário final. Se omitido, usa o e-mail salvo nos artefatos.",
     )
     send_parser.add_argument(
+        "--subject",
+        default="",
+        help="Assunto exato para o envio final. Se omitido, usa o assunto salvo nos artefatos.",
+    )
+    send_parser.add_argument(
+        "--body-file",
+        type=Path,
+        help="Arquivo de texto com o corpo exato para o envio final. Se omitido, usa o HTML salvo.",
+    )
+    send_parser.add_argument(
         "--sender-email",
         default=os.getenv("OUTLOOK_COM_SENDER_EMAIL", "nilvanlopes@outlook.com"),
+    )
+
+    audit_parser = subparsers.add_parser(
+        "audit-sends",
+        help="Audita artefatos de envio sem reenviar e sem confiar no cache local do Outlook.",
+    )
+    audit_parser.add_argument("--output-root", type=Path, default=Path("output"))
+    audit_parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="Mostra o resultado sem atualizar os artefatos.",
     )
     return parser
 
@@ -98,6 +120,14 @@ def _add_apply_arguments(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Sobrescreve o provider configurado no .env do curriculum-optimizer nesta execução.",
     )
+    parser.add_argument(
+        "--application-answer-file",
+        type=Path,
+        help=(
+            "JSON com respostas explícitas para instruções obrigatórias da vaga, "
+            "como disponibilidade, valor pretendido e contratos ativos."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -109,12 +139,32 @@ def main(argv: list[str] | None = None) -> int:
             result = send_existing_application(
                 args.output_dir,
                 recipient_email=args.recipient_email,
+                subject=args.subject,
+                body_text=args.body_file.read_text(encoding="utf-8") if args.body_file else "",
                 sender_email=args.sender_email,
             )
             print(
-                f"Artefatos enviados para {result.recipient_email}; "
-                f"sent={result.sent_matches}; arquivos={args.output_dir.resolve()}"
+                f"Artefatos submetidos ao Outlook local para {result.recipient_email}; "
+                f"server_confirmed={str(getattr(result, 'server_confirmed', False)).lower()}; "
+                f"status={getattr(result, 'status', 'submitted_local')}; "
+                f"arquivos={args.output_dir.resolve()}"
             )
+            return 0
+
+        if args.command == "audit-sends":
+            results = audit_send_artifacts(args.output_root, write=not args.no_write)
+            needs_resend = sum(1 for result in results if result.needs_resend)
+            confirmed = sum(1 for result in results if result.server_confirmed)
+            print(
+                f"Auditoria de envios: total={len(results)}; "
+                f"server_confirmed={confirmed}; needs_resend={needs_resend}; "
+                f"root={args.output_root.resolve()}"
+            )
+            for result in results:
+                print(
+                    f"- {result.verification_status}: {result.recipient_email} | "
+                    f"{result.subject} | {result.output_dir}"
+                )
             return 0
 
         job_text = _resolve_job_text(args)
@@ -130,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                 provider=args.provider,
                 optimizer_output_name=args.optimizer_output_name,
                 optimizer_provider=args.optimizer_provider,
+                application_answer_file=args.application_answer_file,
             )
         )
     except (FileExistsError, FileNotFoundError, RuntimeError, ValueError) as exc:
@@ -137,8 +188,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.send_result:
         print(
-            f"Candidatura enviada para revisão em {result.recipient_email}; "
-            f"sent={result.send_result.sent_matches}; arquivos={result.output_dir.resolve()}"
+            f"Candidatura submetida para revisão no Outlook local em {result.recipient_email}; "
+            f"server_confirmed={str(getattr(result.send_result, 'server_confirmed', False)).lower()}; "
+            f"status={getattr(result.send_result, 'status', 'submitted_local')}; "
+            f"arquivos={result.output_dir.resolve()}"
         )
     else:
         print(f"Candidatura gerada em {result.output_dir.resolve()}")
@@ -154,7 +207,7 @@ def _resolve_job_text(args: argparse.Namespace) -> str:
 
 
 def _normalize_argv(argv: list[str]) -> list[str]:
-    if argv and argv[0] in {"apply", "send"}:
+    if argv and argv[0] in {"apply", "send", "audit-sends"}:
         return argv
     return ["apply", *argv]
 

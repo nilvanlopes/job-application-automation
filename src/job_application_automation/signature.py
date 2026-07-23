@@ -7,6 +7,16 @@ from textwrap import dedent
 from .models import CandidateProfile
 
 
+DEFAULT_SIGNATURE_NAME = "Nilvan Lopes"
+DEFAULT_SIGNATURE_ROLE = "Desenvolvedor FullStack"
+DEFAULT_SIGNATURE_PHONE = "(63) 99223-0471"
+DEFAULT_SIGNATURE_EMAIL = "nilvanlopes@outlook.com"
+DEFAULT_SIGNATURE_WEBSITE = "https://nilvanlopes.com"
+DEFAULT_SIGNATURE_LINKEDIN = "https://www.linkedin.com/in/nilvanlopes"
+DEFAULT_SIGNATURE_GITHUB = "https://github.com/nilvanlopes"
+DEFAULT_SIGNATURE_WHATSAPP = "https://wa.me/5563992230471"
+
+
 @dataclass(slots=True)
 class SignatureProfile:
     name: str
@@ -21,14 +31,14 @@ class SignatureProfile:
     @classmethod
     def from_candidate(cls, candidate: CandidateProfile) -> "SignatureProfile":
         return cls(
-            name=candidate.name,
-            role=candidate.title,
-            phone=candidate.phone,
-            email=candidate.email,
-            website=candidate.website,
-            linkedin=candidate.linkedin,
-            github=candidate.github,
-            whatsapp=candidate.whatsapp,
+            name=candidate.name.strip() or DEFAULT_SIGNATURE_NAME,
+            role=candidate.title.strip() or DEFAULT_SIGNATURE_ROLE,
+            phone=DEFAULT_SIGNATURE_PHONE,
+            email=DEFAULT_SIGNATURE_EMAIL,
+            website=DEFAULT_SIGNATURE_WEBSITE,
+            linkedin=DEFAULT_SIGNATURE_LINKEDIN,
+            github=DEFAULT_SIGNATURE_GITHUB,
+            whatsapp=DEFAULT_SIGNATURE_WHATSAPP,
         )
 
 
