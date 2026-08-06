@@ -155,6 +155,7 @@ def generate_ai_email_brief(
     candidate: CandidateProfile,
     job: JobPosting,
     *,
+    application_facts: tuple[str, ...] = (),
     base_url: str | None = None,
     model: str | None = None,
     request_timeout: float = 120.0,
@@ -162,7 +163,7 @@ def generate_ai_email_brief(
     ai_client: AIClient | None = None,
 ) -> AIEmailBrief:
     candidate_data = _candidate_data_for_email(candidate)
-    evidence_catalog = _candidate_evidence_catalog(candidate_data)
+    evidence_catalog = _candidate_evidence_catalog(candidate_data, application_facts=application_facts)
     vacancy_catalog = _job_priority_catalog(job)
     if not evidence_catalog:
         raise AIEmailGenerationError("O perfil do candidato não contém evidências profissionais para o e-mail.")
@@ -538,6 +539,7 @@ def review_ai_email(
     email: AIEmailContent,
     *,
     resume_markdown: str = "",
+    application_facts: tuple[str, ...] = (),
     alignment_brief: AIEmailBrief | None = None,
     base_url: str | None = None,
     model: str | None = None,
@@ -548,7 +550,13 @@ def review_ai_email(
     candidate_data = _candidate_data_for_email(candidate)
     resolved_model = (model or DEFAULT_OLLAMA_MODEL).strip()
     kwargs = {"opener": opener} if opener is not None else {}
-    base_messages = _build_review_messages(candidate_data, job, email, alignment_brief)
+    base_messages = _build_review_messages(
+        candidate_data,
+        job,
+        email,
+        alignment_brief,
+        application_facts=application_facts,
+    )
     messages = base_messages
     last_error = ""
     last_output = ""
@@ -620,6 +628,7 @@ def generate_reviewed_ai_email(
     job: JobPosting,
     *,
     resume_markdown: str = "",
+    application_facts: tuple[str, ...] = (),
     alignment_brief: AIEmailBrief | None = None,
     base_url: str | None = None,
     model: str | None = None,
@@ -633,6 +642,7 @@ def generate_reviewed_ai_email(
     brief = alignment_brief or generate_ai_email_brief(
         candidate,
         job,
+        application_facts=application_facts,
         base_url=base_url,
         model=model,
         request_timeout=request_timeout,
@@ -662,6 +672,7 @@ def generate_reviewed_ai_email(
                 job,
                 email,
                 resume_markdown=resume_markdown,
+                application_facts=application_facts,
                 alignment_brief=brief,
                 base_url=base_url,
                 model=review_model,
@@ -804,6 +815,8 @@ def _build_messages(
       Expresse continuidade, crescimento ou aprofundamento da carreira já iniciada.
     - Preserve o sentido factual de cada evidência. Não acrescente senioridade, domínio, duração, frequência, método, contexto,
       resultado, impacto ou responsabilidade que a fonte não declare.
+    - Em education, status vazio significa apenas "status não informado". Nunca interprete status vazio como conclusão,
+      matrícula ativa ou conflito com outra formação; entradas educacionais distintas podem coexistir.
     - Evidência com source_kind=skill permite afirmar conhecimento naquela habilidade, e nada além disso. Evidências com
       source_kind=experience_activity ou project_activity permitem descrever somente as ações e o escopo registrados.
       Nunca agrupe uma habilidade isolada em frases como "experiência prática em X, Y e Z", "atuei com X" ou "domino X".
@@ -892,6 +905,8 @@ def _build_review_messages(
     job: JobPosting,
     email: AIEmailContent,
     alignment_brief: AIEmailBrief | None = None,
+    *,
+    application_facts: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
     grammatical_gender = _string(candidate_data.get("grammatical_gender"))
     system_content = f"""
@@ -915,6 +930,10 @@ def _build_review_messages(
       vaga não exige evidência no perfil e nunca é invenção factual.
     - candidate_evidence e source_context são fontes literais. Empresa, projeto, cargo e período presentes nessas fontes ou no
       perfil podem ser usados. Não descarte um fato explícito por achar que ele parece improvável.
+    - Respostas explícitas do candidato para esta candidatura são evidências válidas e devem ser preservadas quando o e-mail
+      as utilizar. Elas não podem ser contraditas por uma inferência feita a partir de um campo incompleto do perfil.
+    - Em education, status vazio significa apenas "status não informado". Nunca interprete status vazio como conclusão,
+      matrícula ativa ou conflito com outra formação; entradas educacionais distintas podem coexistir.
     - Se o perfil registra atuação anterior, "iniciar minha carreira" é incompatível com as fontes. Se o texto atribuir feedback,
       acompanhamento ou mentoria a uma pessoa ou grupo não identificado na evidência, factual_fidelity deve reprovar.
     - Para cada uso de "experiência", "experiência prática", "atuei", "utilizei" ou "domino", confira individualmente todas as
@@ -972,6 +991,7 @@ def _build_review_messages(
         "vaga": _job_data_for_email(job, grammatical_gender=grammatical_gender),
         "brief_de_alinhamento": alignment_brief.to_dict() if alignment_brief else None,
         "perfil_profissional_completo": candidate_data,
+        "respostas_explicitas_da_candidatura": list(application_facts),
         "email_gerado": {"subject": email.subject, "body": email.body},
         "metricas_formato": _email_body_metrics(email.body),
     }
@@ -1674,7 +1694,11 @@ def _candidate_data_for_email(candidate: CandidateProfile) -> dict:
     return data
 
 
-def _candidate_evidence_catalog(candidate_data: dict) -> list[dict[str, str]]:
+def _candidate_evidence_catalog(
+    candidate_data: dict,
+    *,
+    application_facts: tuple[str, ...] = (),
+) -> list[dict[str, str]]:
     catalog: list[dict[str, str]] = []
 
     def add(
@@ -1793,6 +1817,13 @@ def _candidate_evidence_catalog(candidate_data: dict) -> list[dict[str, str]]:
         add(f"soft_skills[{index}]", soft_skill, source_kind="soft_skill")
     for index, skill in enumerate(candidate_data.get("skills") or []):
         add(f"skills[{index}]", skill, source_kind="skill")
+    for index, fact in enumerate(application_facts):
+        add(
+            f"application_facts[{index}]",
+            fact,
+            "resposta explícita do candidato para esta candidatura",
+            "application_answer",
+        )
     return catalog
 
 

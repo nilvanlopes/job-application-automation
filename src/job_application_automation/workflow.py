@@ -124,6 +124,7 @@ def run_application(
                 candidate,
                 job,
                 resume_markdown=resume_text,
+                application_facts=tuple(item.answer for item in instruction_result.fulfilled),
                 ai_client=ai_client,
             )
         except AIEmailReviewError as exc:

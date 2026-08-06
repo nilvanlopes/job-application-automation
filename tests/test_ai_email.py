@@ -17,6 +17,7 @@ from job_application_automation.ai_email import (
     generate_reviewed_ai_email,
     review_ai_email,
     _brief_from_dict,
+    _candidate_evidence_catalog,
     _email_body_metrics,
     _job_priority_catalog,
 )
@@ -840,6 +841,21 @@ def test_generate_reviewed_ai_email_builds_brief_once_and_rewrites_complete_draf
     assert result.alignment_brief is not None
     assert "(a)" not in result.email.subject
     assert "Tenho interesse" in result.email.body
+
+
+def test_application_facts_are_added_as_explicit_candidate_evidence():
+    evidence = _candidate_evidence_catalog(
+        _candidate_profile().to_dict(),
+        application_facts=("ADS no último semestre", "Pretensão de R$ 4.000,00 CLT"),
+    )
+
+    answers = [item for item in evidence if item["source_kind"] == "application_answer"]
+
+    assert [item["text"] for item in answers] == [
+        "ADS no último semestre",
+        "Pretensão de R$ 4.000,00 CLT",
+    ]
+    assert all(item["source_context"] == "resposta explícita do candidato para esta candidatura" for item in answers)
 
 
 def test_generate_reviewed_ai_email_fails_after_rejections():
