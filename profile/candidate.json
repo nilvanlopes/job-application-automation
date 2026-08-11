@@ -19,10 +19,9 @@
     "Componentização",
     "Responsividade",
     "Consumo de APIs REST",
-    "React Native",
     "NestJS",
+    "React Native",
     "Node.js",
-    "Java",
     "Spring",
     "Quarkus",
     "Docker",
@@ -59,16 +58,19 @@
     "Redesign público",
     "Display",
     "Animação",
-    "Componentes reutilizáveis",
+    "Reutilização de componentes",
     "Landing page",
     "SASS",
     "localStorage",
     "Download",
     "Upload",
     "Arquivo JSON local",
+    "Página responsiva",
     "Dark mode",
-    "APIs",
-    "Quarkus JPA",
+    "Java",
+    "JPA",
+    "Criação de endpoints",
+    "Persistência de dados em banco relacional",
     "Consumo de APIs"
   ],
   "education": [
@@ -128,7 +130,7 @@
   "highlights": [
     "Desenvolvimento de aplicativo mobile utilizando React Native e NestJS",
     "Modelagem do sistema com conceitos da engenharia de software",
-    "Integração a gateways de pagamento (Asaas) e ao WhatsApp",
+    "Integração de gateways de pagamento (Asaas) e ao WhatsApp",
     "Manutenção e evolução do sistema central da empresa",
     "Atualizações, correções de bugs e ajustes de funcionalidades"
   ],
@@ -193,8 +195,8 @@
       "name": "Site de Ficha de RPG - Vampiro a Máscara",
       "details": [
         "Criei um site por hobby para usar com os amigos",
-        "utilizando JS para salvar os dados da página no localStorage",
-        "além de download e upload do arquivo JSON local",
+        "utilizando JS para salvar dados no localStorage, além de",
+        "download e upload do arquivo JSON local",
         "a página é responsiva e possui dark mode"
       ],
       "references": [
@@ -203,13 +205,25 @@
       "skills": []
     },
     {
-      "name": "APIs",
+      "name": "API REST com Quarkus/JPA",
       "details": [
-        "Projetos de criação de APIs: nilvanlopes/quarkus-jpa (GitHub",
-        "Projetos de consumo de APIs: training/santanderBootcamp2023",
-        "at main · nilvanlopes/training"
+        "Desenvolvi uma API em Java utilizando Quarkus e JPA, com",
+        "criação de endpoints e persistência de dados em banco relac",
+        "ional"
       ],
-      "references": [],
+      "references": [
+        "https://github.com/nilvanlopes/quarkus-jpa"
+      ],
+      "skills": []
+    },
+    {
+      "name": "Projetos de consumo de APIs",
+      "details": [
+        "Desenvolvi projetos de consumo de APIs"
+      ],
+      "references": [
+        "training/santanderBootcamp2023 at main · nilvanlopes/training"
+      ],
       "skills": []
     }
   ],
