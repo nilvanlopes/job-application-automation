@@ -4,7 +4,7 @@ import json
 
 from .ai_client import AIClient, AIProviderError
 from .json_utils import parse_strict_json_object
-from .models import JobPosting
+from .models import JobPosting, is_resume_delivery_instruction
 from .ollama import DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, OllamaError, chat_completion
 
 
@@ -79,6 +79,10 @@ def _build_messages(raw_text: str) -> list[dict[str, str]]:
         "company_evidence quais trechos do anúncio sustentam esses campos. Extraia também "
         "instruções explícitas de candidatura, como assunto exigido, GitHub, LinkedIn, "
         "disponibilidade, valor pretendido, contratos ativos ou perguntas a responder. "
+        "Não trate chamadas genéricas para enviar ou encaminhar o currículo como perguntas "
+        "nem como application_instructions; frases como 'Interessados, enviem seu currículo', "
+        "'envie o currículo para o e-mail informado' e 'venha fazer parte do time' são apenas "
+        "orientações de entrega ou divulgação. "
         "Use requested_email_subject somente quando o anúncio pedir um assunto exato."
     )
     return [
@@ -115,7 +119,9 @@ def _build_review_messages(raw_text: str, data: dict) -> list[dict[str, str]]:
         "manchete de anúncio, nome da empresa, local, modalidade, instrução de envio ou "
         "marcadores de rede social. Verifique também se company não foi inventada e se "
         "contatos explícitos foram preservados. Verifique se instruções explícitas de candidatura "
-        "foram preservadas sem virarem title. Não corrija por lista de palavras; interprete "
+        "foram preservadas sem virarem title. Chamadas genéricas para enviar o currículo ou fazer "
+        "parte do time são orientações de entrega, não perguntas obrigatórias, e devem ser "
+        "removidas de application_instructions. Não corrija por lista de palavras; interprete "
         "o anúncio e dê feedback semântico curto para uma nova extração quando reprovar."
     )
     return [
@@ -406,7 +412,7 @@ def _instructions(value) -> list:
         if not isinstance(item, dict):
             continue
         text = _string(item.get("text"))
-        if not text:
+        if not text or is_resume_delivery_instruction(text):
             continue
         kind = _string(item.get("kind")) or "custom"
         if kind not in allowed_kinds:

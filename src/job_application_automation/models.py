@@ -322,7 +322,7 @@ def _extract_application_instructions(text: str) -> list[ApplicationInstruction]
         if not line:
             continue
         line = re.sub(r"^(?:[-•]|\d+[.)])\s*", "", line).strip()
-        if not line or re.search(r"envie\s+para|com\s+o\s+assunto", line, flags=re.IGNORECASE):
+        if not line or is_resume_delivery_instruction(line) or re.search(r"com\s+o\s+assunto", line, flags=re.IGNORECASE):
             continue
         kind = _classify_application_instruction(line)
         instructions.append(
@@ -334,6 +334,18 @@ def _extract_application_instructions(text: str) -> list[ApplicationInstruction]
             )
         )
     return _dedupe_application_instructions(instructions)
+
+
+def is_resume_delivery_instruction(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:interessad[oa]s?[,\s:;-]*)?"
+            r"(?:envie(?:m)?|encaminhe(?:m)?|mande(?:m)?)\s+"
+            r"(?:seu|o|um)?\s*curr[ií]culo\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def _extract_application_section(text: str) -> str:
