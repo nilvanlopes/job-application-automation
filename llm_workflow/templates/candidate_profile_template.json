@@ -1,0 +1,43 @@
+{
+  "name": "Nilvan Lopes Cruz",
+  "title": "Desenvolvedor Fullstack",
+  "grammatical_gender": "masculino",
+  "resume_source_path": "/mnt/c/Users/pyu/OneDrive/Documentos/Obsidian/dev/Curriculo.md",
+  "resume_base_file": "curriculo_base.md",
+  "contacts": {
+    "email": "nilvanlopes@outlook.com",
+    "phone": "+55 (XX) XXXXX-XXXX",
+    "location": "Palmas, TO - Brasil",
+    "linkedin": "https://linkedin.com/in/nilvanlopes",
+    "github": "https://github.com/nilvanlopes"
+  },
+  "skills": [
+    "React",
+    "PHP",
+    "Python",
+    "NodeJS",
+    "SQL",
+    "Git",
+    "Angular",
+    "HTML",
+    "CSS",
+    "JavaScript",
+    "NestJS",
+    "React Native",
+    "Java",
+    "Spring",
+    "Quarkus",
+    "Docker",
+    "AWS",
+    "API REST",
+    "CI/CD"
+  ],
+  "education": [
+    {
+      "name": "Análise e Desenvolvimento de Sistemas",
+      "institution": "Universidade Estadual do Tocantins (UNITINS)",
+      "status": "cursando",
+      "started_at": "2024"
+    }
+  ]
+}
