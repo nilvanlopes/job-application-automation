@@ -484,6 +484,11 @@ def _normalize_email_body_structure(body: str, *, expand_nearly_valid_short_body
         return body.strip()
     greeting = blocks[0] if blocks[0] == "Olá," else ""
     content_blocks = blocks[1:] if greeting else blocks
+    if greeting and len(content_blocks) == 1:
+        single_line_paragraphs = [line.strip() for line in content_blocks[0].splitlines() if line.strip()]
+        if len(single_line_paragraphs) == 3 and all(re.search(r"[.!?]$", line) for line in single_line_paragraphs):
+            body = "\n\n".join([greeting, *single_line_paragraphs])
+            content_blocks = single_line_paragraphs
     if len(content_blocks) == 2:
         first, second = content_blocks
         sentences = [
@@ -505,6 +510,15 @@ def _normalize_email_body_structure(body: str, *, expand_nearly_valid_short_body
         (r"\bagreg\w*\s+valor\b", "contribuir"),
         (r"\bme\s+preparou\b", "me deu base"),
         (r"\bdesde\s+o\s+primeiro\s+dia\b", "ao ingressar"),
+        (r"\bdesde\s+j[aá]\b", "na oportunidade"),
+        (r"\bdom[ií]nio(?:\s+pr[aá]tico)?\b", "conhecimento"),
+        (r"\bdomino\b", "possuo conhecimentos em"),
+        (r"\bambiente\s+desafiador\s+e\s+colaborativo\b", "ambiente de aprendizado"),
+        (r"\bPHP\s*8\+\b", "PHP"),
+        # A skill isolada autoriza somente conhecimento; neutralize exageros recorrentes do modelo local.
+        (r"\bviv[eê]ncia\s+pr[aá]tica\s+(?:com|em)\s+PHP\b", "conhecimento em PHP"),
+        (r"\bexperi[eê]ncia\s+pr[aá]tica\s+(?:com|em)\s+PHP\b", "conhecimento em PHP"),
+        (r"\b(?:j[aá]\s+)?utilizei\s+PHP\s+para\s+criar\s+endpoints\b", "possuo conhecimento em PHP"),
     )
     for pattern, replacement in replacements:
         body = re.sub(pattern, replacement, body, flags=re.IGNORECASE)
@@ -798,6 +812,29 @@ def _build_messages(
     alignment_brief: AIEmailBrief | None = None,
 ) -> list[dict[str, str]]:
     grammatical_gender = _string(candidate_data.get("grammatical_gender"))
+    declared_skills = ", ".join(
+        _string(skill) for skill in (candidate_data.get("skills") or []) if _string(skill)
+    ) or "nenhuma habilidade técnica listada"
+    declared_skill_terms = _normalized_terms(declared_skills)
+    undeclared_requirement_warnings = []
+    for technology in ("Laravel", "MySQL", "POO", "HTML", "CSS", "JavaScript", "Git"):
+        if technology.casefold() not in declared_skill_terms and technology.casefold() in _normalized_terms(job.raw_text):
+            undeclared_requirement_warnings.append(
+                f"{technology} aparece na vaga, mas não nas habilidades declaradas; não o apresente como experiência ou conhecimento."
+            )
+    undeclared_requirement_warning = " ".join(undeclared_requirement_warnings)
+    experience_text = " ".join(
+        activity
+        for experience in (candidate_data.get("experiences") or [])
+        for activity in (experience.get("activities") or [])
+        if isinstance(activity, str)
+    ).casefold()
+    unsupported_activity_warning = ""
+    if "php" in declared_skill_terms and "endpoint" not in experience_text and "api" not in experience_text:
+        unsupported_activity_warning = (
+            "PHP está declarado, mas o histórico não registra endpoints ou APIs em PHP; diga apenas que possui conhecimento em PHP."
+        )
+    declared_education = json.dumps(candidate_data.get("education") or [], ensure_ascii=False)
     system_content = f"""
     Você é um redator sênior de e-mails de candidatura em português do Brasil. Escreva um texto específico, humano e seguro,
     cuja força venha da escolha de evidências concretas. Sua saída possui somente "subject" e "body".
@@ -817,6 +854,15 @@ def _build_messages(
       resultado, impacto ou responsabilidade que a fonte não declare.
     - Em education, status vazio significa apenas "status não informado". Nunca interprete status vazio como conclusão,
       matrícula ativa ou conflito com outra formação; entradas educacionais distintas podem coexistir.
+    - A formação e o período acadêmico declarados no perfil são exatamente: {declared_education}. Use somente esses dados; nunca deduza ou troque o número do período.
+      Se o período não estiver inequívoco no campo correspondente, omita o número e mencione apenas o curso.
+    - As habilidades técnicas declaradas no perfil são exclusivamente: {declared_skills}. Uma tecnologia, framework ou linguagem fora dessa lista
+      não pode ser apresentada como experiência, domínio ou conhecimento do candidato. Se aparecer apenas como requisito da vaga,
+      trate-a como algo que o candidato pretende aprender, sem alegar experiência.
+    - ALERTA ESPECÍFICO DESTA EXECUÇÃO: {undeclared_requirement_warning or 'nenhum requisito técnico adicional foi identificado.'}
+      Se este alerta mencionar uma tecnologia, ela só pode aparecer como objetivo de aprendizado ou pode ser omitida.
+    - ALERTA SOBRE ESCOPO DE ATIVIDADES: {unsupported_activity_warning or 'nenhuma limitação adicional foi identificada.'}
+      Não transforme uma habilidade em endpoint, API, projeto, integração ou entrega específica sem essa atividade estar literalmente nas fontes.
     - Evidência com source_kind=skill permite afirmar conhecimento naquela habilidade, e nada além disso. Evidências com
       source_kind=experience_activity ou project_activity permitem descrever somente as ações e o escopo registrados.
       Nunca agrupe uma habilidade isolada em frases como "experiência prática em X, Y e Z", "atuei com X" ou "domino X".
@@ -922,6 +968,8 @@ def _build_review_messages(
       Se o e-mail já possui seleção suficiente, o controle deve passar e a sugestão deve ser omitida.
     - Score 9 significa pronto para envio com, no máximo, polimento opcional. Score 10 significa pronto e especialmente forte.
       Score de 0 a 8 exige ao menos um controle reprovado com trecho/problema concreto e correção obrigatória.
+      Se todos os controles passarem e o único apontamento for uma sugestão de tom ou polimento, use score 9 e approved=true;
+      nunca transforme uma sugestão opcional em issue ou reprovação.
     - Em cada controle, details descreve o problema concreto. correction informa apenas a ação necessária para corrigi-lo.
       Quando passed=true, correction deve ser vazio. Não escreva recomendações opcionais em correction.
 
@@ -1378,10 +1426,16 @@ def _review_from_dict(data: dict, *, allow_safe_rejection_defaults: bool = False
     if checks_rejected and score >= EMAIL_REVIEW_MIN_SCORE:
         raise AIEmailGenerationError("A revisão reprovou controles, mas retornou score 9 ou 10.")
     if not checks_rejected and score < EMAIL_REVIEW_MIN_SCORE:
-        raise AIEmailGenerationError("A revisão retornou score abaixo de 9 sem indicar controle reprovado.")
+        # O schema exige que notas 0-8 venham acompanhadas de um controle reprovado.
+        # Modelos locais às vezes devolvem uma sugestão opcional com score 8 apesar de
+        # aprovarem todos os controles; nesse caso, normalize para a menor aprovação válida.
+        score = EMAIL_REVIEW_MIN_SCORE
     expected_approval = not checks_rejected and score >= EMAIL_REVIEW_MIN_SCORE and not issues
     if approved is not expected_approval:
-        raise AIEmailGenerationError("A revisão retornou aprovação incompatível com score, controles ou issues.")
+        if not checks_rejected and expected_approval:
+            approved = True
+        else:
+            raise AIEmailGenerationError("A revisão retornou aprovação incompatível com score, controles ou issues.")
     return AIEmailReview(
         approved=approved,
         score=score,
