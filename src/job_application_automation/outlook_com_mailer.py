@@ -114,14 +114,14 @@ def _build_powershell_script(
     if sync_after_send:
         sync_lines = f"""
 try {{
-  $sync = $session.SyncObjects | Where-Object {{ $_.Name -eq "All Accounts" }} | Select-Object -First 1;
-  if($sync) {{
-    $sync.Start();
-    Write-Host "OUTLOOK_SYNC_STARTED name=$($sync.Name)";
-    Start-Sleep -Seconds {sync_wait_seconds};
-  }} else {{
-    Write-Host "OUTLOOK_SYNC_SKIPPED reason=no_all_accounts_sync_object";
+  for($i = 1; $i -le $session.SyncObjects.Count; $i++) {{
+    try {{
+      $s = $session.SyncObjects.Item($i);
+      $s.Start();
+      Write-Host "OUTLOOK_SYNC_STARTED name=$($s.Name)";
+    }} catch {{}}
   }}
+  Start-Sleep -Seconds 20;
 }} catch {{
   Write-Host "OUTLOOK_SYNC_FAILED error=$($_.Exception.Message)";
 }}
