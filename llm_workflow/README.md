@@ -57,9 +57,17 @@ Ideal para pipelines de agentes (LangChain, Flowise, n8n, Dify) ou quando você 
   - Gênero fixo masculino (sem marcações neutras como `(a)` ou `/o`).
   - **Assinatura Visual Sem Repetição de Texto:** O e-mail em Markdown encerra-se estritamente na saudação final `Atenciosamente,`. O cartão visual HTML de assinatura é inserido imediatamente a seguir no e-mail final enviado pelo Outlook, evitando duplicação de texto.
   - **Nomenclatura e Compilação Real do Anexo PDF:** O arquivo de currículo anexado deve ser compilado como um PDF real completo (`Curriculo - <nome-do-candidato> - <vaga>.pdf`), proibindo o uso de arquivos mock ou em branco.
-  - **Regra de Envio em 2 Fases (Email Delivery):**
-    - **Fase 1 (Teste/Revisão):** O e-mail é enviado primeiramente para `pyuloko7@gmail.com` com o anexo do currículo.
-    - **Fase 2 (Envio Oficial):** Mediante solicitação expressa do usuário, o e-mail é disparado para o destinatário oficial da vaga (`recipient_email`).
+  - **Regra de Envio em 2 Fases (Execução Automática da Fase 1 e Proteção Anti-Duplicação):**
+    - **Fase 1 (Teste/Revisão - AUTOMÁTICA):** O e-mail de teste com anexo do currículo PDF é disparado **AUTOMATICAMENTE** para `pyuloko7@gmail.com` logo após a geração de todos os artefatos. O comando deve ser executado **EXATAMENTE UMA ÚNICA VEZ** (sem chamadas concorrentes ou loops).
+    - **Fase 2 (Envio Oficial - MEDIANTE APROVAÇÃO):** Mediante solicitação expressa do usuário, o e-mail oficial é disparado para o destinatário da vaga (`recipient_email`).
+    - **Comandos de Disparo (CLI/Terminal):**
+      ```bash
+      # Fase 1 (Automática):
+      uv run job-application-automation send --output-dir output/<empresa>-<cargo> --recipient-email pyuloko7@gmail.com
+
+      # Fase 2 (Após Aprovação do Usuário):
+      uv run job-application-automation send --output-dir output/<empresa>-<cargo> --recipient-email <email-da-vaga>
+      ```
     - **Garantia de Sincronia no Outlook COM:** O disparo em segundo plano itera por todos os `SyncObjects` (`$session.SyncObjects`) e aguarda o tempo de sincronização de 20s para garantir o envio imediato da Caixa de Saída (*Outbox*).
 - **Preservação Obrigatória de Conteúdo (Currículo):**
   - A IA **nunca** remove seções inteiras do currículo original (Soft Skills, Outras Habilidades Técnicas, Projetos Pessoais).
@@ -69,16 +77,12 @@ Ideal para pipelines de agentes (LangChain, Flowise, n8n, Dify) ou quando você 
 
 ---
 
-## 📄 Currículo Base de Referência
+## 📄 Currículo de Entrada (Base ou Personalizado)
 
-O arquivo [`curriculo_base.md`](file:///home/pyu/docker/job-application-automation/llm_workflow/templates/curriculo_base.md) contém o currículo original completo do candidato. **Sempre use este arquivo como fonte** ao preencher os prompts das Etapas 2, 3 e 4.
+- **Currículo Padrão:** O arquivo [`curriculo_base.md`](file:///home/pyu/docker/job-application-automation/llm_workflow/templates/curriculo_base.md) (espelhado de `/mnt/c/Users/pyu/OneDrive/Documentos/Obsidian/dev/Curriculo.md`) contém o currículo original completo do candidato e é usado por padrão quando nenhum arquivo alternativo é informado.
+- **Currículo Personalizado Informado pelo Usuário:** Quando o usuário fornecer um arquivo de currículo alternativo (ex: `curriculo_nilvan_lopes.pdf`, `.md` ou `.txt`), o workflow deve **extrair seu texto e utilizá-lo como o currículo base**, passando-o obrigatoriamente pela reescrita da Etapa 3 (`Curriculo_Otimizado.md`) e compilando o novo PDF otimizado antes do envio.
 
-O caminho original no Windows/WSL é:
-```
-/mnt/c/Users/pyu/OneDrive/Documentos/Obsidian/dev/Curriculo.md
-```
-
-> **Para vagas de suporte:** complemente o currículo base com informações do perfil LinkedIn do candidato (experiências em suporte, ITIL, Google Workspace, Windows Enterprise, etc.).
+> **Para vagas de suporte:** complemente o currículo com informações de perfil do candidato (experiências em suporte presencial/remoto, hardware, redes, ITIL, Google Workspace, Windows Enterprise, etc.).
 
 ---
 
