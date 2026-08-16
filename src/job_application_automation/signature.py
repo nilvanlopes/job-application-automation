@@ -187,9 +187,6 @@ def build_signature_html(profile: SignatureProfile) -> str:
                 </table>
               </td>
             </tr>
-                      </table>
-              </td>
-            </tr>
           </table>
         </div>
         """
