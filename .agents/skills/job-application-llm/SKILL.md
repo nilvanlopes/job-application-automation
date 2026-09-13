@@ -1,26 +1,44 @@
 ---
 name: job-application-llm
-description: Workflow 100% LLM para automação de candidaturas, compilação de currículo PDF e disparo automático em 2 fases via Outlook.
+description: Workflow 100% LLM para automação de candidaturas, compilação de currículo PDF e disparo automático em 2 fases via Outlook ou WhatsApp.
 ---
 
 # Workflow de Candidatura LLM (Job Application Automation)
 
-Este skill define o padrão de execução para quando o usuário solicitar uma candidatura utilizando `llmworkflow`.
+Este skill define o padrão rigoroso de execução para quando o usuário solicitar uma candidatura utilizando `/llm-workflow` ou comandos correlatos.
 
 ## ⚡ Regra de Ouro: Execução Automática da Fase 1
 
-### 📄 Resolução do Currículo de Entrada:
-- **Currículo Informado pelo Usuário:** Caso o usuário forneça um arquivo de currículo específico (PDF, Markdown, TXT ou caminho local), o conteúdo desse arquivo DEVE ser extraído/lido e utilizado como o currículo base para a reescrita/otimização da vaga. O arquivo fornecido NUNCA deve ser apenas copiado cegamente: ele deve passar pelo processo de otimização em 1ª pessoa (`Curriculo_Otimizado.md`), gerando o PDF customizado correspondente.
-- **Currículo Padrão:** Caso o usuário não especifique nenhum currículo alternativo, utiliza-se o `curriculo_base.md` padrão do repositório.
+### 🔄 Passo 0: Sincronização Inicial do Currículo do Obsidian
+- Antes de iniciar a candidatura, o arquivo de currículo mais recente do Obsidian (`/mnt/c/Users/pyu/OneDrive/Documentos/Obsidian/dev/Curriculo.md`) deve ser lido/sincronizado para atualizar a base local [`llm_workflow/templates/curriculo_base.md`](file:///home/pyu/docker/job-application-automation/llm_workflow/templates/curriculo_base.md):
+  ```bash
+  cp "/mnt/c/Users/pyu/OneDrive/Documentos/Obsidian/dev/Curriculo.md" "llm_workflow/templates/curriculo_base.md"
+  ```
+- **Currículo Alternativo Informado pelo Usuário:** Caso o usuário forneça um arquivo específico no prompt (PDF, Markdown, TXT ou caminho local), o conteúdo desse arquivo DEVE ser extraído/lido e utilizado como a base para a otimização daquela vaga específica.
+
+---
 
 ### 📋 Etapas do Workflow de Execução Imediata:
-1. **Extração da Vaga:** Criar `job_structured.json` higienizado com cargo técnico limpo, empresa, requisitos e contato.
-2. **Análise de Aderência:** Criar `match_report.md` cruzando os requisitos com o currículo de entrada (informado ou padrão).
-3. **Otimização do Currículo:** Criar `Curriculo_Otimizado.md` em **1ª pessoa (EU)** a partir do currículo de entrada, adaptando para as palavras-chave da vaga e preservando 100% das seções e bullet points.
-4. **Redação do E-mail:** Criar `cover_email.md` e `cover_email.html` com **estritamente 105 a 130 palavras**, 1ª pessoa, sem termos proibidos ("alinhamento perfeito", "perfil ideal", "sólida experiência", etc.) e com o cartão visual de assinatura HTML.
-5. **Auto-Revisão:** Criar `email_review.md` com nota >= 9/10 e validação factual.
-6. **Destinatário e Manifesto:** Criar `recipient_verification.md` e `application_manifest.json`.
-7. **Compilação do PDF:** Compilar o `Curriculo_Otimizado.md` em formato PDF real (`Curriculo - Nilvan Lopes - <cargo>.pdf` ou slug correspondente) para ser anexado.
+1. **Extração da Vaga:** Criar `job_structured.json` higienizado com cargo técnico limpo (`title`), empresa (`company`), localização/modalidade (100% Remoto), tipo de contrato (PJ/CLT/Estágio), requisitos, diferenciais, responsabilidades e canais de contato (`recipient_email` e `recipient_phone`).
+2. **Análise de Aderência:** Criar `match_report.md` cruzando os requisitos com o currículo de entrada em 1ª pessoa estrita ("Possuo...", "Atuei..."), com mapeamento de pontos fortes, lacunas honestas e palavras-chave ATS.
+3. **Otimização do Currículo:** Criar `Curriculo_Otimizado.md` em **1ª pessoa (EU)** a partir do currículo de entrada, adaptando para as palavras-chave da vaga e **PRESERVANDO 100% DAS SEÇÕES E BULLET POINTS ORIGINAIS** (incluindo Soft Skills, Outras Habilidades Técnicas, Projetos Pessoais, Formação e Certificações).
+4. **Redação do E-mail e Apresentação:** Criar `cover_email.md` e `cover_email.html` com **estritamente 105 a 130 palavras**, 1ª pessoa, sem termos proibidos (*"alinhamento perfeito"*, *"perfil ideal"*, *"sólida experiência"*, *"agregar valor"*, *"ansioso/ansiosa"*, *"ávido"*, *"me preparou"*, *"desde o primeiro dia"*) e com o cartão visual de assinatura HTML sem duplicação de texto.
+5. **Auto-Revisão:** Criar `email_review.md` e `email_review.json` com nota >= 9/10 (esperado 10/10) e validação factual.
+6. **Destinatário, Manifesto e WhatsApp:** Criar `recipient_verification.md` e `application_manifest.json`. Se o canal for WhatsApp/mensagem direta, disponibilizar a mensagem completa formatada pronta para envio.
+7. **Diagramação e Compilação do PDF Real:** Criar `Curriculo_Otimizado.html` com layout A4 e compilar o `Curriculo_Nilvan_Lopes_<Cargo_ou_Slug>.pdf` via PowerShell + Edge Headless:
+   ```powershell
+   powershell.exe -NoProfile -Command "
+   $browsers = @('C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', 'C:\Program Files\Microsoft\Edge\Application\msedge.exe', 'C:\Program Files\Google\Chrome\Application\chrome.exe')
+   $browser = $null
+   foreach ($b in $browsers) { if (Test-Path $b) { $browser = $b; break } }
+   if (-not $browser) { $browser = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
+   $html = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Otimizado.html'
+   $pdf = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Nilvan_Lopes_<Cargo>.pdf'
+   & $browser --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf-no-header --run-all-compositor-stages-before-draw --print-to-pdf=$pdf $html
+   Start-Sleep -Seconds 2
+   if (Test-Path $pdf) { Write-Host 'PDF_SUCCESS' }
+   "
+   ```
 8. **Disparo Automático da Fase 1 (Teste / Revisão):**
    - Executar **AUTOMATICAMENTE** e **UMA ÚNICA VEZ** o comando de envio para `pyuloko7@gmail.com`:
      ```bash
@@ -37,3 +55,4 @@ Este skill define o padrão de execução para quando o usuário solicitar uma c
   ```bash
   uv run job-application-automation send --output-dir output/<pasta> --recipient-email <email-da-vaga>
   ```
+- No caso de envio por WhatsApp/contato direto, disponibilizar o texto de apresentação formatado e instruções para anexo do PDF.

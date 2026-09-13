@@ -32,6 +32,17 @@ Atuo na área de desenvolvimento como programador FullStack desde 2025, com expe
 
 ## Experiência profissional
 
+### 2026 - Evolve
+
+- **Cargo:** Desenvolvedor Fullstack
+- **Projeto:** Plataforma Evolve
+- Atuei no desenvolvimento e manutenção de aplicativo mobile, backend e backoffice, utilizando React Native, Expo, NestJS, Prisma, PostgreSQL e Docker.
+- Implementei a verificação de e-mail ponta a ponta, com endpoints no backend, tela no aplicativo e envio de códigos via Resend.
+- Padronizei a configuração dos ambientes local, dev e prod nos repositórios, incluindo scripts de inicialização e infraestrutura local com Docker e PostgreSQL 17.
+- Desenvolvi a anonimização centralizada de contas, integrada aos fluxos do aplicativo e backoffice, com limpeza de dados relacionados e testes automatizados.
+- Analisei e documentei melhorias para o chat 1:1 em tempo real, mantendo a arquitetura REST e Socket.IO, com foco em confiabilidade, listeners e mensagens não lidas.
+- Organizei branches de desenvolvimento, pull requests e práticas de versionamento nos repositórios.
+
 ### 2026 - Fity Ai
 
 - **Cargo:** Desenvolvedor Fullstack

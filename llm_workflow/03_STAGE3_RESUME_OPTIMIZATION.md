@@ -1,6 +1,6 @@
-# Etapa 3: Otimização e Adaptação de Conteúdo do Currículo (Resume Adaptation)
+# Etapa 3: Otimização e Compilação do Currículo em PDF (Resume Adaptation & PDF Render)
 
-Este prompt executa a **Etapa 3** do workflow LLM: adapta estrategicamente o currículo do candidato para a vaga específica, priorizando relevância e palavras-chave ATS, mantendo 100% da veracidade factual.
+Este documento especifica a **Etapa 3** do workflow LLM: adapta estrategicamente o currículo do candidato para a vaga específica, gera o `Curriculo_Otimizado.html` estilizado para A4 e compila o `Curriculo_Nilvan_Lopes_<Cargo_ou_Slug>.pdf` via Microsoft Edge Headless (PowerShell).
 
 ---
 
@@ -11,7 +11,7 @@ Forneça o prompt abaixo para a LLM contendo o Currículo Base do Candidato, a V
 ---
 
 ```markdown
-Você é um consultor especialista em otimização de currículos para sistemas ATS (Applicant Tracking Systems) e seleção executiva.
+Você é um consultor especialista em otimização de currículos para sistemas ATS (Applicant Tracking Systems) e seleção técnica executiva.
 
 Sua tarefa é reescrever e otimizar o Currículo Base do Candidato para a Vaga Alvo, utilizando o Relatório de Aderência (Match Report) como guia.
 
@@ -19,24 +19,28 @@ Sua tarefa é reescrever e otimizar o Currículo Base do Candidato para a Vaga A
 
 ### REGRAS CRÍTICAS DE REESCRITA:
 1. **VERACIDADE INVIOLÁVEL:** NUNCA adicione empresas onde o candidato não trabalhou, títulos de graduação fictícios, certificados não obtidos ou tecnologias com as quais ele nunca trabalhou.
-2. **REDAÇÃO EM PRIMEIRA PESSOA (EU):** Toda a redação do objetivo, resumo profissional, experiências e projetos DEVE ser feita em **1ª pessoa** ("Sou acadêmico...", "Possuo projetos...", "Desenvolvi...", "Atuo..."). É **estritamente proibido** redigir em 3ª pessoa ("Nilvan possui...", "O candidato desenvolveu...").
+2. **REDAÇÃO EM PRIMEIRA PESSOA (EU):** Toda a redação do objetivo, resumo profissional, experiências e projetos DEVE ser feita em **1ª pessoa** ("Sou desenvolvedor...", "Possuo projetos...", "Desenvolvi...", "Atuo...", "Integrei..."). É **estritamente proibido** redigir em 3ª pessoa ("Nilvan possui...", "O candidato desenvolveu...").
 3. **AJUSTE DE CARGO CABEÇALHO:** Atualize o título profissional localizado logo abaixo do nome do candidato para o **Cargo Limpo Extraído** na Etapa 1.
-4. **REESTRUTURAÇÃO DO RESUMO PROFISSIONAL:** Reescreva o resumo profissional em 1ª pessoa destacando imediatamente o alinhamento com a vaga (ex: anos de experiência, principais linguagens/frameworks solicitados no anúncio e áreas de domínio).
+4. **REESTRUTURAÇÃO DO RESUMO PROFISSIONAL:** Reescreva o resumo profissional em 1ª pessoa destacando imediatamente o alinhamento com a vaga (ex: tempo de atuação, principais linguagens/frameworks solicitados no anúncio, integrações de APIs e áreas de domínio).
 5. **REORDENAÇÃO DE COMPETÊNCIAS:** Na seção de Habilidades/Tecnologias, posicione no topo as competências que combinam exatamente com as palavras-chave prioritárias da vaga.
-6. **ENFASE EM CONQUISTAS:** Reescreva os bullet points das experiências profissionais em 1ª pessoa para destacar resultados, integrações, performance e uso das tecnologias requisitadas no anúncio, preservando os cargos e empresas originais.
-7. **NOMENCLATURA DO PDF:** Ao exportar para PDF (via `curriculum-optimizer`), utilize o padrão **`Curriculo - <nome-do-candidato> - <vaga>.pdf`** (ex: `Curriculo - Nilvan Lopes - Desenvolvedor Java Júnior.pdf` ou `nilvan-lopes-desenvolvedor-java-junior.pdf`).
+6. **ENFASE EM CONQUISTAS:** Reescreva os bullet points das experiências profissionais em 1ª pessoa para destacar resultados, integrações de serviços, gateways de pagamentos, performance e uso das tecnologias requisitadas no anúncio, preservando os cargos e empresas originais.
+7. **NOMENCLATURA DO PDF:** Ao exportar para PDF, utilize o padrão **`Curriculo_Nilvan_Lopes_<Cargo_ou_Slug>.pdf`** (ex: `Curriculo_Nilvan_Lopes_Desenvolvedor_Full_Stack.pdf`).
 
 ### REGRAS OBRIGATÓRIAS DE PRESERVAÇÃO DE CONTEÚDO (NÃO VIOLAR):
-8. **NUNCA REMOVA SEÇÕES INTEIRAS:** Todas as seções presentes no currículo original DEVEM aparecer no currículo otimizado. Em especial:
-   - **Soft Skills** — manter todas as soft skills listadas, pois são utilizadas por filtros ATS e recrutadores.
-   - **Outras Habilidades Técnicas** (backend, infraestrutura, administração de sistemas) — preservar integralmente, pois contém tecnologias relevantes como Python, Java, Spring, Quarkus, Docker, AWS, ITIL e Google Workspace.
-   - **Projetos Pessoais** — manter todos os projetos listados no original, com seus links e descrições em 1ª pessoa.
-   - **Objetivo** — manter ou adaptar para a vaga em 1ª pessoa, nunca remover.
-   - **Dados Pessoais** — manter endereço, telefone, e-mail, LinkedIn e GitHub.
-9. **PRESERVAR TODOS OS BULLET POINTS DAS EXPERIÊNCIAS:** Cada experiência profissional deve manter no mínimo a mesma quantidade de bullet points que o original. Pode reformular, mas NUNCA reduzir ou omitir itens (ex: deploy App Store/Play Store, integração Asaas/WhatsApp, React Context, etc.).
-10. **REORDENAR SIM, APAGAR NÃO:** Você pode reordenar seções estrategicamente (colocar a seção mais relevante para a vaga primeiro), mas é proibido eliminar qualquer seção ou conteúdo do currículo original.
-11. **MANTER QUANTIDADE DE HABILIDADES:** Se o currículo original lista 15 tecnologias/ferramentas, o otimizado deve listar no mínimo 15 — reordene priorizando as da vaga, mas não corte as demais.
-12. **IDIOMAS E FORMAÇÃO COMPLETOS:** Manter todas as formações e idiomas listados no original, sem omissões.
+8. **NUNCA REMOVA SEÇÕES INTEIRAS:** Todas as seções presentes no currículo original DEVEM aparecer no currículo otimizado:
+   - **Dados Pessoais:** Nome, localização, telefone, e-mail, LinkedIn e GitHub.
+   - **Objetivo:** Adaptado para a vaga em 1ª pessoa.
+   - **Resumo Profissional:** Reescrito em 1ª pessoa focado na vaga.
+   - **Habilidades Técnicas:** Todas as habilidades do original, reordenadas com prioridade para a vaga.
+   - **Experiência Profissional:** TODOS os blocos de empresas e cargos com TODOS os bullet points preservados.
+   - **Projetos Pessoais e Portfólio:** Todos os projetos com links e descrições em 1ª pessoa.
+   - **Outras Habilidades Técnicas:** Preservar integralmente (Python, Java, Spring, Quarkus, Docker, AWS, UNIX/Linux, Active Directory, ITIL, Google Workspace, Windows Enterprise).
+   - **Formação Acadêmica:** Todas as graduações e cursos técnicos.
+   - **Certificações e Cursos:** Todos os cursos e certificações com carga horária.
+   - **Idiomas:** Todos os idiomas com níveis.
+   - **Soft Skills:** Todas as soft skills listadas, pois são vitais para filtros ATS e avaliações de cultura.
+9. **PRESERVAR TODOS OS BULLET POINTS DAS EXPERIÊNCIAS:** Cada experiência profissional deve manter a mesma quantidade de bullet points do original. Pode reformular e enriquecer, mas NUNCA omitir itens (como deploy em App Store/Play Store, integração com Asaas/WhatsApp, gerenciamento de estado com React Context, etc.).
+10. **REORDENAR SIM, APAGAR NÃO:** É permitido reordenar seções estrategicamente, mas é estritamente proibido deletar qualquer seção ou dado histórico do candidato.
 
 ---
 
@@ -59,72 +63,100 @@ Sua tarefa é reescrever e otimizar o Currículo Base do Candidato para a Vaga A
 
 ---
 
-### SAÍDA ESPERADA (`Curriculo_Otimizado.md`)
+### SAÍDA ESPERADA
 
-Gere a versão completa do currículo adaptado em formato Markdown limpo e pronto para exportação em PDF:
+Gere a versão Markdown (`Curriculo_Otimizado.md`) e a versão HTML com CSS para impressão (`Curriculo_Otimizado.html`).
 
+# ARTEFATO 3A: `Curriculo_Otimizado.md`
 ```markdown
 # [Nome do Candidato]
 ## [Cargo Limpo Extraído da Vaga]
 
-[E-mail] | [Telefone/WhatsApp] | [Endereço/Cidade/UF] | [LinkedIn] | [GitHub]
+[Cidade, UF] | [Telefone] | [E-mail] | [LinkedIn] | [GitHub]
 
 ---
 
 ### Objetivo
-[Objetivo adaptado para a vaga, baseado no objetivo original do candidato.]
+[Objetivo adaptado para a vaga em 1ª pessoa]
 
 ---
 
 ### Resumo Profissional
-[Resumo de 3 a 5 linhas altamente focado na vaga alvo, incorporando as palavras-chave prioritárias de forma natural e demonstrando especialidade no segmento.]
+[Resumo profissional em 1ª pessoa altamente focado nas exigências e tecnologias da vaga]
 
 ---
 
-### Principais Competências
-- **Linguagens e estruturas:** [Todas as linguagens do original, reordenadas com as da vaga primeiro]
-- **Frameworks e bibliotecas:** [Todos os frameworks do original, reordenados]
-- **Ferramentas e ambiente de desenvolvimento:** [Todas as ferramentas do original]
-- **Práticas de desenvolvimento:** [Todas as práticas do original]
+### Habilidades Técnicas
+- **[Categoria 1]:** [Tecnologias do original reordenadas com as da vaga no topo]
+- **[Categoria 2]:** [Bancos de dados e infraestrutura]
+- **[Categoria 3]:** [Ferramentas e metodologias]
 
 ---
 
 ### Experiência Profissional
 
-#### [Empresa 1] | [Cargo Otimizado/Original]
-*[Período] | [Local/Modalidade]*
-- [Bullet point adaptado destacando tecnologia/resultado relevante para a vaga]
-- [TODOS os bullet points originais, reformulados mas nunca removidos]
+#### [Empresa 1] | [Cargo]
+*[Período] | [Modalidade/Local]*
+- [Bullet points em 1ª pessoa preservando 100% dos tópicos do original]
 
-#### [Empresa 2] | [Cargo Original]
-*[Período]*
-- [TODOS os bullet points originais, reformulados]
+#### [Empresa 2] | [Cargo]
+*[Período] | [Local]*
+- [Bullet points em 1ª pessoa preservando 100% dos tópicos do original]
 
 ---
 
-### Projetos Pessoais
-- [TODOS os projetos do original, com links e descrições preservados]
+### Projetos Pessoais e Portfólio
+- [Todos os projetos originais mantidos com links]
 
 ---
 
 ### Outras Habilidades Técnicas
-- **Desenvolvimento backend e criação de APIs:** [Preservar Python, Java, Spring, Quarkus, etc.]
-- **Infraestrutura e escalabilidade:** [Preservar Docker, AWS, etc.]
-- **Administração de sistemas:** [Preservar Windows Enterprise, Google Workspace, ITIL, etc.]
+- [Todas as outras habilidades preservadas]
 
 ---
 
-### Educação e Certificações
-- [TODAS as formações do original]
+### Formação Acadêmica
+- [Todas as formações acadêmicas do original]
+
+---
+
+### Certificações e Cursos
+- [Todas as certificações do original]
 
 ---
 
 ### Idiomas
-- [TODOS os idiomas do original]
+- [Todos os idiomas do original]
 
 ---
 
 ### Soft Skills
-- [TODAS as soft skills do original, sem omissões]
+- [Todas as soft skills do original]
 ```
+```
+
+---
+
+## 🖨️ Comando de Compilação do PDF Real (PowerShell / Edge Headless)
+
+Para compilar o arquivo HTML do currículo em um PDF vetorial limpo (sem cabeçalhos/rodapés de navegador):
+
+```powershell
+powershell.exe -NoProfile -Command "
+$browsers = @(
+    'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+    'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+    'C:\Program Files\Google\Chrome\Application\chrome.exe'
+)
+$browser = $null
+foreach ($b in $browsers) { if (Test-Path $b) { $browser = $b; break } }
+if (-not $browser) { $browser = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
+
+$html = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Otimizado.html'
+$pdf = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Nilvan_Lopes_Desenvolvedor_Full_Stack.pdf'
+
+& $browser --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf-no-header --run-all-compositor-stages-before-draw --print-to-pdf=$pdf $html
+Start-Sleep -Seconds 2
+if (Test-Path $pdf) { Write-Host 'PDF_SUCCESS' }
+"
 ```
