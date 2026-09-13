@@ -34,27 +34,11 @@ Antes de processar qualquer vaga, garanta que o currículo base está 100% atual
 ### 3️⃣ Etapa 3: Otimização do Currículo e Compilação do PDF (`03_STAGE3_RESUME_OPTIMIZATION.md`)
 - **Preservação Obrigatória de Conteúdo:** NUNCA remover seções inteiras (Soft Skills, Outras Habilidades Técnicas, Projetos Pessoais, Formação, Certificações) e preservar TODOS os bullet points originais.
 - Gerar `output/<empresa>-<cargo>/Curriculo_Otimizado.md` e `output/<empresa>-<cargo>/Curriculo_Otimizado.html` com layout A4 portrait.
-- **Compilação do PDF Real (PowerShell + Edge Headless):**
-  ```powershell
-  powershell.exe -NoProfile -Command "
-  $browsers = @(
-      'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-      'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
-      'C:\Program Files\Google\Chrome\Application\chrome.exe'
-  )
-  $browser = $null
-  foreach ($b in $browsers) { if (Test-Path $b) { $browser = $b; break } }
-  if (-not $browser) { $browser = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
-
-  $html = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Otimizado.html'
-  $pdf = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Nilvan_Lopes_<Cargo>.pdf'
-
-  & $browser --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf-no-header --run-all-compositor-stages-before-draw --print-to-pdf=$pdf $html
-  Start-Sleep -Seconds 2
-  if (Test-Path $pdf) { Write-Host 'PDF_SUCCESS' }
-  "
+- **Compilação do PDF Real (Edge Headless / Python ou PowerShell):**
+  ```bash
+  uv run python scripts/compile_pdf.py --output-dir output/<empresa>-<cargo>
   ```
-- Copiar o PDF resultante para `output/<empresa>-<cargo>/Curriculo_Nilvan_Lopes_<Cargo>.pdf`.
+  *(Ou diretamente via PowerShell Edge Headless mapeando o caminho `output/<empresa>-<cargo>/Curriculo_Otimizado.html`).*
 
 ### 4️⃣ Etapa 4: Geração do E-mail, HTML e Auto-Revisão (`04_STAGE4_EMAIL_GENERATION.md`)
 - Gerar `cover_email.md` com **estritamente entre 105 e 130 palavras**, 1ª pessoa, sem termos proibidos (*"alinhamento perfeito"*, *"perfil ideal"*, *"sólida experiência"*, *"agregar valor"*, etc.) e encerrando estritamente em `Atenciosamente,`.

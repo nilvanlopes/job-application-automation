@@ -137,10 +137,14 @@ Gere a versão Markdown (`Curriculo_Otimizado.md`) e a versão HTML com CSS para
 
 ---
 
-## 🖨️ Comando de Compilação do PDF Real (PowerShell / Edge Headless)
+## 🖨️ Comando de Compilação do PDF Real (Edge / Chrome Headless)
 
-Para compilar o arquivo HTML do currículo em um PDF vetorial limpo (sem cabeçalhos/rodapés de navegador):
+### Opção 1 (Recomendada - Python / WSL automatizado):
+```bash
+uv run python scripts/compile_pdf.py --output-dir output/<empresa>-<cargo>
+```
 
+### Opção 2 (Direto via PowerShell no Windows):
 ```powershell
 powershell.exe -NoProfile -Command "
 $browsers = @(
@@ -152,8 +156,8 @@ $browser = $null
 foreach ($b in $browsers) { if (Test-Path $b) { $browser = $b; break } }
 if (-not $browser) { $browser = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
 
-$html = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Otimizado.html'
-$pdf = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Nilvan_Lopes_Desenvolvedor_Full_Stack.pdf'
+$html = '\\wsl.localhost\Ubuntu\home\pyu\docker\job-application-automation\output\<empresa>-<cargo>\Curriculo_Otimizado.html'
+$pdf = '\\wsl.localhost\Ubuntu\home\pyu\docker\job-application-automation\output\<empresa>-<cargo>\Curriculo_Nilvan_Lopes_<Cargo>.pdf'
 
 & $browser --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf-no-header --run-all-compositor-stages-before-draw --print-to-pdf=$pdf $html
 Start-Sleep -Seconds 2

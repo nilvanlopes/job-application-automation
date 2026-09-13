@@ -25,19 +25,9 @@ Este skill define o padrão rigoroso de execução para quando o usuário solici
 4. **Redação do E-mail e Apresentação:** Criar `cover_email.md` e `cover_email.html` com **estritamente 105 a 130 palavras**, 1ª pessoa, sem termos proibidos (*"alinhamento perfeito"*, *"perfil ideal"*, *"sólida experiência"*, *"agregar valor"*, *"ansioso/ansiosa"*, *"ávido"*, *"me preparou"*, *"desde o primeiro dia"*) e com o cartão visual de assinatura HTML sem duplicação de texto.
 5. **Auto-Revisão:** Criar `email_review.md` e `email_review.json` com nota >= 9/10 (esperado 10/10) e validação factual.
 6. **Destinatário, Manifesto e WhatsApp:** Criar `recipient_verification.md` e `application_manifest.json`. Se o canal for WhatsApp/mensagem direta, disponibilizar a mensagem completa formatada pronta para envio.
-7. **Diagramação e Compilação do PDF Real:** Criar `Curriculo_Otimizado.html` com layout A4 e compilar o `Curriculo_Nilvan_Lopes_<Cargo_ou_Slug>.pdf` via PowerShell + Edge Headless:
-   ```powershell
-   powershell.exe -NoProfile -Command "
-   $browsers = @('C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', 'C:\Program Files\Microsoft\Edge\Application\msedge.exe', 'C:\Program Files\Google\Chrome\Application\chrome.exe')
-   $browser = $null
-   foreach ($b in $browsers) { if (Test-Path $b) { $browser = $b; break } }
-   if (-not $browser) { $browser = (Get-Command msedge.exe -ErrorAction SilentlyContinue).Source }
-   $html = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Otimizado.html'
-   $pdf = 'C:\Users\pyu\OneDrive\Documentos\Obsidian\dev\Curriculo_Nilvan_Lopes_<Cargo>.pdf'
-   & $browser --headless=new --disable-gpu --no-pdf-header-footer --print-to-pdf-no-header --run-all-compositor-stages-before-draw --print-to-pdf=$pdf $html
-   Start-Sleep -Seconds 2
-   if (Test-Path $pdf) { Write-Host 'PDF_SUCCESS' }
-   "
+7. **Diagramação e Compilação do PDF Real:** Criar `Curriculo_Otimizado.html` com layout A4 e compilar o `Curriculo_Nilvan_Lopes_<Cargo_ou_Slug>.pdf` via `scripts/compile_pdf.py` (ou Edge Headless via PowerShell):
+   ```bash
+   uv run python scripts/compile_pdf.py --output-dir output/<pasta>
    ```
 8. **Disparo Automático da Fase 1 (Teste / Revisão):**
    - Executar **AUTOMATICAMENTE** e **UMA ÚNICA VEZ** o comando de envio para `pyuloko7@gmail.com`:
