@@ -26,13 +26,12 @@ Open and read the curriculum URL before writing any candidate fact. If it cannot
 6. For email vacancies, create exactly one draft addressed to the official vacancy recipient, with the HTML body and generated PDF attached. Never invoke send. If the email app or draft action is unavailable, report that the draft was not created and still attach the files.
 7. For WhatsApp vacancies, do not create an email draft. Attach the PDF, output the complete message, and create a URL-encoded `wa.me` link. Never send the WhatsApp message.
 8. Do not create a replacement draft or rerun generation unless the user explicitly says the result is bad and provides feedback or invokes `corrigir`.
-9. After successful completion, if the current app session has authorized Windows computer control, request a delayed Windows shutdown using `scripts/shutdown_windows.ps1 -DelaySeconds 60` (equivalent to `shutdown.exe /s /t 60 /d p:4:1`). Never shut down after a validation failure, inaccessible curriculum, missing PDF, missing draft, or unhandled delivery error. If Windows control is unavailable, report `windows_shutdown: unavailable` and do not claim the computer was turned off.
 
 ## User commands
 
-- `executar`: run the full workflow once and then perform the successful-completion shutdown policy.
+- `executar`: run the full workflow once.
 - `corrigir`: use the user's feedback to create the next version only when explicitly requested.
-- `status`: report source access, channel, generated artifacts, validation, model fallback, draft state, and Windows shutdown state from the current conversation.
+- `status`: report source access, channel, generated artifacts, validation, model fallback, and draft state from the current conversation.
 
 Read the relevant supporting references before executing a mode:
 
@@ -41,4 +40,4 @@ Read the relevant supporting references before executing a mode:
 - [factual rules](references/factual-rules.md) for truth, first-person text, and preservation rules;
 - [artifact contract](references/artifact-contract.md) for filenames, validation, and manifest fields.
 
-Use `scripts/validate_application.py`, `scripts/count_email_words.py`, and `scripts/build_whatsapp_link.py` when the app runtime supports skill scripts. These scripts validate or format data only; they must not send mail, access credentials, or mutate external services. The only machine mutation allowed by this skill is the explicitly requested final Windows shutdown, after all delivery artifacts are verified.
+Use `scripts/validate_application.py`, `scripts/count_email_words.py`, and `scripts/build_whatsapp_link.py` when the app runtime supports skill scripts. These scripts validate or format data only; they must not send mail, access credentials, or mutate external services.

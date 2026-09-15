@@ -54,12 +54,6 @@ def validate(directory: Path) -> list[str]:
                 errors.append("manifest-sent-must-be-false")
             if manifest.get("delivery_mode") != "draft_only":
                 errors.append("manifest-delivery-mode")
-            if manifest.get("windows_shutdown", "not_attempted") not in {
-                "requested",
-                "unavailable",
-                "not_attempted",
-            }:
-                errors.append("manifest-windows-shutdown")
             pdf_name = manifest.get("resume_pdf", "")
             if not pdf_name:
                 errors.append("manifest-missing-resume-pdf")

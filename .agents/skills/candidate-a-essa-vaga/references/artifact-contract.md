@@ -32,7 +32,6 @@ application_manifest.json
   "recipient_phone": "",
   "draft_created": false,
   "sent": false,
-  "windows_shutdown": "requested|unavailable|not_attempted",
   "regeneration_count": 0,
   "email_review_approved": false,
   "model_trace": [],

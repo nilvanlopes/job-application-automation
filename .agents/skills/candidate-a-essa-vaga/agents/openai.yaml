@@ -1,6 +1,6 @@
 interface:
   display_name: "Candidatura LLM pelo app"
   short_description: "Gere candidatura factual e rascunho final"
-  default_prompt: "Use $candidate-a-essa-vaga para processar esta vaga com meu link de currículo, gerar o PDF, preparar o rascunho ou link de WhatsApp e desligar o Windows ao concluir com sucesso."
+  default_prompt: "Use $candidate-a-essa-vaga para processar esta vaga com meu link de currículo, gerar o PDF e preparar o rascunho ou link de WhatsApp sem enviar nada."
 policy:
   allow_implicit_invocation: true

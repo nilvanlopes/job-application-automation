@@ -29,5 +29,3 @@ Para e-mail, crie um único rascunho para o destinatário oficial, com PDF anexa
 Para WhatsApp, anexe o PDF e produza texto e link `wa.me`. Nunca abra uma ação de envio.
 
 Depois da entrega, aguarde feedback. Só `corrigir` com feedback explícito pode criar uma nova versão.
-
-Quando todos os gates forem aprovados, execute a política de desligamento do Windows descrita no `SKILL.md`. O estado deve registrar se o desligamento foi solicitado ou se o controle do Windows não estava disponível.
