@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,7 +69,10 @@ def send_outlook_com_email(
             sync_wait_seconds=config.sync_wait_seconds,
         ),
     ]
-    completed = runner(command, capture_output=True, text=True, timeout=180)
+    runner_kwargs = {"capture_output": True, "text": True, "timeout": 180}
+    if runner is subprocess.run:
+        runner_kwargs["env"] = _resolve_windows_process_env(config.powershell_executable)
+    completed = runner(command, **runner_kwargs)
     stdout = getattr(completed, "stdout", "") or ""
     stderr = getattr(completed, "stderr", "") or ""
     returncode = getattr(completed, "returncode", 0)
@@ -171,6 +175,48 @@ def _to_windows_path(path: Path) -> str:
         rest = text[7:].replace("/", "\\")
         return f"{drive.upper()}:\\{rest}"
     return "\\\\wsl.localhost\\Ubuntu" + text.replace("/", "\\")
+
+
+def _resolve_windows_process_env(powershell_executable: str) -> dict[str, str]:
+    """Select a working WSL interop socket before invoking Windows COM clients.
+
+    WSL can leave the shell's WSL_INTEROP socket present but unusable. A plain
+    PowerShell command then fails with UtilBindVsockAnyPort before Outlook COM
+    is reached. Probe the available sockets without touching Outlook and use
+    the first one that can start PowerShell.
+    """
+    environment = os.environ.copy()
+    interop_root = Path("/run/WSL")
+    if not interop_root.exists():
+        return environment
+
+    current = environment.get("WSL_INTEROP", "")
+    candidates: list[str] = []
+    if current:
+        candidates.append(current)
+    candidates.extend(str(path) for path in sorted(interop_root.glob("*_interop")))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen or not Path(candidate).exists():
+            continue
+        seen.add(candidate)
+        probe_environment = environment.copy()
+        probe_environment["WSL_INTEROP"] = candidate
+        try:
+            probe = subprocess.run(
+                [powershell_executable, "-NoProfile", "-Command", "exit 0"],
+                env=probe_environment,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return probe_environment
+
+    return environment
 
 
 def _extract_count(output: str, key: str) -> int:
