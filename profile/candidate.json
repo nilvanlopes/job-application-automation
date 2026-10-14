@@ -19,59 +19,81 @@
     "Componentização",
     "Responsividade",
     "Consumo de APIs REST",
-    "NestJS",
     "React Native",
-    "Node.js",
-    "Spring",
-    "Quarkus",
+    "Expo",
+    "NestJS",
+    "Prisma",
+    "PostgreSQL",
     "Docker",
+    "Padronização de ambientes",
+    "Anonimização de contas",
+    "Testes automatizados",
+    "Chat 1:1 em tempo real",
+    "Listeners",
+    "Mensagens não lidas",
+    "Branches de desenvolvimento",
+    "Pull requests",
+    "Versionamento",
+    "Modelagem do sistema",
+    "Engenharia de software",
+    "Componentes modulares",
+    "Integração de APIs REST",
+    "Gerenciamento de estado da aplicação",
+    "Operações de dados em bancos relacionais",
+    "Gateways de pagamento",
+    "API oficial da Meta",
+    "Providers externos",
+    "Qualidade de código",
+    "Estabilidade do sistema",
+    "Entregas consistentes",
+    "Fluxos de CI/CD",
+    "Deploy do aplicativo",
+    "Manutenção e evolução do sistema",
+    "Atualizações",
+    "Correções de bugs",
+    "Ajustes de funcionalidades",
+    "Node.js",
+    "Desenvolvimento backend",
+    "Criação de APIs",
+    "Linguagens de programação: Python",
+    "Linguagens de programação: Java",
+    "Framework: Spring",
+    "Framework: Quarkus",
+    "Contêineres e orquestração",
+    "Computação em nuvem",
     "AWS",
+    "Administração de sistemas",
     "Windows 10 Enterprise",
     "Google Workspace",
     "ITIL",
+    "PostgreSQL 17",
     "API REST",
-    "Bancos Relacionais",
+    "Bancos relacionais",
     "Asaas",
-    "WhatsApp API",
-    "Meta API",
-    "Providers Externos",
-    "Engenharia de Software",
-    "Documentação do Produto",
-    "Componentes Modulares",
-    "Integração de APIs",
-    "Gerenciamento de Estado da Aplicação",
-    "Boas Práticas de Versionamento",
-    "Fluxos de CI/CD",
-    "Deploy nas Lojas App Store e Play Store",
-    "Manutenção de Sistema",
-    "Evolução do Sistema",
-    "Atualizações",
-    "Correções de Bugs",
-    "Ajustes de Funcionalidades",
-    "Garantia de Qualidade de Código",
-    "Estabilidade do Sistema",
-    "Entregas Consistentes",
+    "WhatsApp",
     "CI/CD",
     "App Store",
     "Play Store",
     "React Context",
+    "Manutenção",
+    "REST",
+    "Socket.IO",
+    "Meta",
     "Redesign público",
     "Display",
     "Animação",
-    "Reutilização de componentes",
-    "Landing page",
     "SASS",
     "localStorage",
     "Download",
     "Upload",
-    "Arquivo JSON local",
-    "Página responsiva",
+    "Arquivo JSON",
     "Dark mode",
     "Java",
+    "Quarkus",
     "JPA",
     "Criação de endpoints",
-    "Persistência de dados em banco relacional",
-    "Consumo de APIs"
+    "Persistência de dados",
+    "Banco relacional"
   ],
   "education": [
     {
@@ -128,13 +150,29 @@
   "linkedin": "https://www.linkedin.com/in/nilvanlopes/",
   "whatsapp": "",
   "highlights": [
-    "Desenvolvimento de aplicativo mobile utilizando React Native e NestJS",
-    "Modelagem do sistema com conceitos da engenharia de software",
-    "Integração de gateways de pagamento (Asaas) e ao WhatsApp",
-    "Manutenção e evolução do sistema central da empresa",
-    "Atualizações, correções de bugs e ajustes de funcionalidades"
+    "Implementei a verificação de e-mail ponta a ponta, com endpoints no backend, tela no aplicativo e envio de códigos via Resend.",
+    "Desenvolvi a anonimização centralizada de contas, integrada aos fluxos do aplicativo e backoffice, com limpeza de dados relacionados e testes automatizados.",
+    "Participei ativamente da modelagem do sistema, aplicando conceitos da engenharia de software para promover uma entrega profissional do produto e sua documentação.",
+    "Integrei a aplicação a gateways de pagamento (Asaas) e ao WhatsApp, tanto com a API oficial da Meta quanto com providers externos.",
+    "Garanti qualidade de código, estabilidade do sistema e entregas consistentes dentro do fluxo de desenvolvimento."
   ],
   "experiences": [
+    {
+      "company": "Evolve",
+      "role": "Desenvolvedor Fullstack",
+      "project": "Plataforma Evolve",
+      "started_at": "2026",
+      "ended_at": "",
+      "activities": [
+        "Atuei no desenvolvimento e manutenção de aplicativo mobile, backend e backoffice, utilizando React Native, Expo, NestJS, Prisma, PostgreSQL e Docker.",
+        "Implementei a verificação de e-mail ponta a ponta, com endpoints no backend, tela no aplicativo e envio de códigos via Resend.",
+        "Padronizei a configuração dos ambientes local, dev e prod nos repositórios, incluindo scripts de inicialização e infraestrutura local com Docker e PostgreSQL 17.",
+        "Desenvolvi a anonimização centralizada de contas, integrada aos fluxos do aplicativo e backoffice, com limpeza de dados relacionados e testes automatizados.",
+        "Analisei e documentei melhorias para o chat 1:1 em tempo real, mantendo a arquitetura REST e Socket.IO, com foco em confiabilidade, listeners e mensagens não lidas.",
+        "Organizei branches de desenvolvimento, pull requests e práticas de versionamento nos repositórios."
+      ],
+      "skills": []
+    },
     {
       "company": "Fity Ai",
       "role": "Desenvolvedor Fullstack",
@@ -172,8 +210,8 @@
       "name": "Neon Reinvented - Banco Neon",
       "details": [
         "Desenvolvi uma landing page utilizando um redesign público",
-        "com foco em display, animação, responsividade e reutilização",
-        "de componentes"
+        "Foco em display, animação, responsividade e reutilização de",
+        "componentes"
       ],
       "references": [
         "projetocodeboost2.netlify.app"
@@ -184,7 +222,7 @@
       "name": "Landing Page Hostinger",
       "details": [
         "Desenvolvi uma landing page para a Hostinger",
-        "com foco em responsividade e uso da tecnologia SASS"
+        "Foco em responsividade e uso da tecnologia SASS"
       ],
       "references": [
         "projetocodeboost1.netlify.app"
@@ -195,9 +233,9 @@
       "name": "Site de Ficha de RPG - Vampiro a Máscara",
       "details": [
         "Criei um site por hobby para usar com os amigos",
-        "utilizando JS para salvar dados no localStorage, além de",
-        "download e upload do arquivo JSON local",
-        "a página é responsiva e possui dark mode"
+        "Utilizei JS para salvar dados no localStorage",
+        "Download e upload do arquivo JSON local",
+        "Página é responsiva e possui dark mode"
       ],
       "references": [
         "fichavampiro.netlify.app"
@@ -207,9 +245,9 @@
     {
       "name": "API REST com Quarkus/JPA",
       "details": [
-        "Desenvolvi uma API em Java utilizando Quarkus e JPA, com",
-        "criação de endpoints e persistência de dados em banco relac",
-        "ional"
+        "Desenvolvi uma API em Java utilizando Quarkus e JPA",
+        "Criação de endpoints e persistência de dados em banco rel",
+        "acional"
       ],
       "references": [
         "https://github.com/nilvanlopes/quarkus-jpa"
@@ -219,7 +257,7 @@
     {
       "name": "Projetos de consumo de APIs",
       "details": [
-        "Desenvolvi projetos de consumo de APIs"
+        "Projetos de consumo de APIs"
       ],
       "references": [
         "training/santanderBootcamp2023 at main · nilvanlopes/training"
@@ -230,8 +268,8 @@
   "languages": [
     {
       "name": "Inglês",
-      "proficiency": "intermediário (leitura e escrita técnica)",
-      "notes": ""
+      "proficiency": "intermediário",
+      "notes": "leitura e escrita técnica"
     },
     {
       "name": "Português",
